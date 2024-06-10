@@ -8,7 +8,7 @@ This build is based on php:7.2-fpm-alpine and QoQ-Cot v5.0_mac_bec.
 
 ## How to run
 
-Create a ___www ___ and a ___db___ directories then run,
+Create a ___www___ and a ___db___ directories then run,
 
 ```shell
 docker container run --name qoq-cot  -p 8080:8080 -p 9900:9900  -v ./www:/var/www/localhost/htdocs  -v ./db:/var/lib/mysql -d clamy54/docker-qoq-cot:latest
