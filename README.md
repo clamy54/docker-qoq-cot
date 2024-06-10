@@ -1,6 +1,6 @@
 # QoQ-Cot 
 
-This container provides a fully fonctionnal QoQ-Cot server (WebUI & Coq server)
+This container provides a fully fonctionnal [QoQ-Cot](https://sourcesup.renater.fr/wiki/qoq-cot/presentation_generale) server (WebUI & Coq server)
 
 This build is based on php:7.2-fpm-alpine and QoQ-Cot v5.0_mac_bec.
 
@@ -11,7 +11,7 @@ This build is based on php:7.2-fpm-alpine and QoQ-Cot v5.0_mac_bec.
 Create a ___www___ and a ___db___ directories then run,
 
 ```shell
-docker container run --name qoq-cot  -p 8080:8080 -p 9900:9900  -v ./www:/var/www/localhost/htdocs  -v ./db:/var/lib/mysql -d clamy54/docker-qoq-cot:latest
+docker container run --name qoq-cot  -p 8080:8080 -p 9900:9900  -v ./www:/var/www/localhost/htdocs  -v ./db:/var/lib/mysql -d clamy54/qoq-cot:latest
 ```
 
 You can get mariadb passwords and webui admin password using the following command :
