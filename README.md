@@ -1,6 +1,6 @@
 # QoQ-Cot 
 
-This container provides a fully fonctionnal [QoQ-Cot](https://sourcesup.renater.fr/wiki/qoq-cot/presentation_generale) server (WebUI & Coq server)
+This container provides a fully fonctional [QoQ-Cot](https://sourcesup.renater.fr/wiki/qoq-cot/presentation_generale) server (WebUI & Coq server)
 
 This build is based on php:7.2-fpm-alpine and QoQ-Cot v5.0_mac_bec.
 
