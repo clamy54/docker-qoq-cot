@@ -9,7 +9,7 @@ RUN apk add --no-cache apache2 apache2-utils apache2-ssl apache2-ldap apache2-pr
 RUN docker-php-ext-install pdo_mysql
 RUN apk add --no-cache libpng libpng-dev libjpeg-turbo-dev libwebp-dev zlib-dev libxpm-dev libbz2 libmcrypt libxslt icu imagemagick imagemagick-libs imagemagick-dev  bzip2-dev libmcrypt-dev libxml2-dev libedit-dev libxslt-dev icu-dev sqlite-dev freetype-dev 
 RUN docker-php-ext-configure gd  --with-freetype-dir=/usr/include/  --with-png-dir=/usr/include/ --with-jpeg-dir=/usr/include 
-RUN docker-php-ext-install bz2 bcmath dom exif fileinfo hash iconv intl opcache pcntl pdo pdo_mysql pdo_sqlite readline session simplexml xml xsl zip gd
+RUN docker-php-ext-install bz2 bcmath dom exif fileinfo hash iconv intl opcache pcntl pdo pdo_mysql pdo_sqlite readline session simplexml xml xsl zip gd calendar
 RUN apk del freetype-dev libpng-dev libjpeg-turbo-dev freetype-dev libpng-dev libjpeg-turbo-dev bzip2-dev libmcrypt-dev libxml2-dev libedit-dev libxslt-dev icu-dev sqlite-dev
 RUN cp /usr/share/zoneinfo/Europe/Paris /etc/localtime  
 RUN cp /usr/local/etc/php/php.ini-production /usr/local/etc/php/php.ini
