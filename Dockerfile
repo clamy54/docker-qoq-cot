@@ -7,10 +7,10 @@ WORKDIR /app
 RUN apk add --no-cache wget rsync mariadb mariadb-client mariadb-server-utils pwgen perl perl-io-socket-ssl  perl-dbi perl-yaml-tiny perl-io-socket-ssl perl-dbd-mysql perl-io-socket-inet6 perl-data-dump perl-mime-base64 perl-encode && rm -f /var/cache/apk/*
 RUN apk add --no-cache apache2 apache2-utils apache2-ssl apache2-ldap apache2-proxy tzdata  && rm -f /var/cache/apk/*
 RUN docker-php-ext-install pdo_mysql
-RUN apk add --no-cache libpng libpng-dev libjpeg-turbo-dev libwebp-dev zlib-dev libxpm-dev libbz2 libmcrypt libxslt icu imagemagick imagemagick-libs imagemagick-dev  bzip2-dev libmcrypt-dev libxml2-dev libedit-dev libxslt-dev icu-dev sqlite-dev freetype-dev 
+RUN apk add --no-cache libpng libpng-dev libjpeg-turbo-dev libwebp-dev zlib-dev libxpm-dev libbz2 libmcrypt libxslt icu imagemagick imagemagick-libs imagemagick-dev openldap-dev bzip2-dev libmcrypt-dev libxml2-dev libedit-dev libxslt-dev icu-dev sqlite-dev freetype-dev 
 RUN docker-php-ext-configure gd  --with-freetype-dir=/usr/include/  --with-png-dir=/usr/include/ --with-jpeg-dir=/usr/include 
-RUN docker-php-ext-install bz2 bcmath dom exif fileinfo hash iconv intl opcache pcntl pdo pdo_mysql pdo_sqlite readline session simplexml xml xsl zip gd calendar
-RUN apk del freetype-dev libpng-dev libjpeg-turbo-dev freetype-dev libpng-dev libjpeg-turbo-dev bzip2-dev libmcrypt-dev libxml2-dev libedit-dev libxslt-dev icu-dev sqlite-dev
+RUN docker-php-ext-install bz2 bcmath dom exif fileinfo hash iconv intl opcache pcntl pdo pdo_mysql pdo_sqlite readline session simplexml xml xsl zip gd calendar ldap
+RUN apk del freetype-dev libpng-dev libjpeg-turbo-dev freetype-dev libpng-dev libjpeg-turbo-dev bzip2-dev libmcrypt-dev libxml2-dev libedit-dev libxslt-dev icu-dev sqlite-dev openldap-dev
 RUN cp /usr/share/zoneinfo/Europe/Paris /etc/localtime  
 RUN cp /usr/local/etc/php/php.ini-production /usr/local/etc/php/php.ini
 RUN sed -i "s/;date.timezone =/date.timezone = Europe\/Paris/g" /usr/local/etc/php/php.ini && echo "Europe/Paris" > /etc/timezone
