@@ -14,14 +14,7 @@ QoQ-Cot was written for PHP 7. The patches under `files/patches/` are applied at
 
 ## Security
 
-This image also fixes security issues found in QoQ-Cot v5.0_mac_bec. Users of previous versions of this image should upgrade.
-
-* `06-admin-securite.patch` : administration pages hardened
-* `07-suivi-securite.patch` : connection tracking page hardened
-* `08-graphes-securite.patch` : stricter validation of the graph forms
-* `09-scripts-cli.patch` : maintenance scripts only run from the command line, unused code removed
-
-The web server only serves the files the WebUI needs, sends the usual security headers and the session cookie is hardened.
+The additional patches under `files/patches/` harden the web application and the server configuration. Users of previous versions of this image should upgrade.
 
 `setup.php`, `export_salles_to_csv.php` and `bonne_annee.php` can no longer be opened from a browser. Run them with `docker container exec`, for example :
 ```shell

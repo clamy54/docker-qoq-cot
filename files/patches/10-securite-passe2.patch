@@ -1,0 +1,559 @@
+--- a/src/app/admin/delete.php
++++ b/src/app/admin/delete.php
+@@ -56,11 +56,18 @@
+ 
+ $login = (isset($_POST['login']) && is_string($_POST['login'])) ? $_POST['login'] : '';
+ 
+-$sql = 'DELETE FROM Admins WHERE login = :login';
++# On refuse de supprimer son propre compte et de retirer le dernier administrateur,
++# ce qui rendrait l'interface d'administration définitivement inaccessible.
++$nbAdmins = (int) $pdo->query('SELECT COUNT(*) FROM Admins')->fetchColumn();
+ 
+-$query = $pdo->prepare($sql);
+-$query->bindValue(':login', $login, PDO::PARAM_STR);
+-$query->execute();
++if ($login !== '' && $login !== $_SESSION['CURRENT_USER'] && $nbAdmins > 1) {
++    # Correspondance binaire exacte, cohérente avec la vérification ci-dessus et avec checkRoles.php.
++    $sql = 'DELETE FROM Admins WHERE login = BINARY :login';
++
++    $query = $pdo->prepare($sql);
++    $query->bindValue(':login', $login, PDO::PARAM_STR);
++    $query->execute();
++}
+ 
+ $sqlAllAdmin = 'SELECT login FROM Admins ORDER BY login ASC';
+ 
+--- a/src/app/graphe/CpuDetailGraph.class.php
++++ b/src/app/graphe/CpuDetailGraph.class.php
+@@ -187,7 +187,7 @@
+             //les bornes de l'intervalle demandé si date_DEBUT ou date_FIN se situent en dehors de cet intervalle.
+             $sql = "SELECT if(date_DEBUT < '".$datestrDebut."', '".$datestrDebut."', date_DEBUT),if(date_FIN > '".$datestrFin."', '".$datestrFin."', date_FIN)".
+                    "FROM MachinesToSalles as ms INNER JOIN Salles s ON ms.RefSalle = s.IdSalle ".
+-                   "WHERE NomSalle = '".$nomSalle."' AND NOT (ms.Date_FIN < '".$datestrDebut."' OR ms.date_DEBUT > '".$datestrFin."')";
++                   "WHERE NomSalle = ".$pdo->quote($nomSalle)." AND NOT (ms.Date_FIN < '".$datestrDebut."' OR ms.date_DEBUT > '".$datestrFin."')";
+             $query = $pdo->prepare($sql);
+             $query->execute();
+ 
+@@ -263,7 +263,7 @@
+       //prend donc en compte le fait qu'une machine ne soit présente qu'à une
+       // certaine période de l'année
+       $sql = "SELECT sum(datediff(if(date_FIN > '".$datestr2."', '".$datestr2."', date_FIN), if(date_DEBUT < '".$datestr1."', '".$datestr1."', date_DEBUT))/365)".
+-             " FROM MachinesToSalles as ms INNER JOIN Salles s ON ms.RefSalle = s.IdSalle WHERE NomSalle = '".$nomSalle."' ".
++             " FROM MachinesToSalles as ms INNER JOIN Salles s ON ms.RefSalle = s.IdSalle WHERE NomSalle = ".$pdo->quote($nomSalle)." ".
+              "AND NOT (ms.Date_FIN < '".$datestr1."' OR ms.date_DEBUT > '".$datestr2."');";
+       $query = $pdo->prepare($sql);
+       $query->execute();
+@@ -363,7 +363,7 @@
+                    'ON ms.RefSalle = s.IdSalle '.
+                    'WHERE NOT (DateFin < "'.$debut->format('Y-m-d').'" OR DateDebut > "'.$fin->format('Y-m-d').'") '.
+                    'AND NOT (HeureFin < :heureDebut OR HeureDebut > :heureFin) '.
+-                   'AND NomSalle = "'.$nomSalle.'" ';
++                   'AND NomSalle = '.$pdo->quote($nomSalle).' ';
+ 
+             $listeJO = implode(',', \Dao::unserializeListe($this->_joursOuvres));
+ 
+@@ -395,7 +395,7 @@
+                    'ON ms.RefSalle = s.IdSalle '.
+                    'WHERE NOT (DateFin < "'.$debut->format('Y-m-d').'" OR DateDebut > "'.$fin->format('Y-m-d').'") '.
+                    'AND NOT (HeureFin < :excluDebut OR HeureDebut > :excluFin) '.
+-                   'AND NomSalle = "'.$nomSalle.'" ';
++                   'AND NomSalle = '.$pdo->quote($nomSalle).' ';
+ 
+                 $listeJO = implode(',', \Dao::unserializeListe($this->_joursOuvres));
+ 
+--- a/src/app/graphe/DureeGraph.class.php
++++ b/src/app/graphe/DureeGraph.class.php
+@@ -284,6 +284,11 @@
+                 $heureDebutConnexion=$this->hoursToMinutes($result->HeureDebut);
+                 $heureFinConnexion=$this->hoursToMinutes($result->HeureFin);
+ 
++                # Les champs (login, OS, heures) viennent de la base et finissent dans l'attribut
++                # title de la carte, que l'infobulle réaffiche en HTML : on les échappe ici, en
++                # conservant le <br /> de mise en forme ajouté par le code.
++                $ligneInfo = htmlspecialchars($result->Login, ENT_QUOTES).' ('.htmlspecialchars($result->NomOs, ENT_QUOTES).') de '.htmlspecialchars($result->HeureDebut, ENT_QUOTES).' à '.htmlspecialchars($result->HeureFin, ENT_QUOTES).'<br />';
++
+                 $next=0;
+                 while(! $next) {
+                      if ($currCreneau+$this->pas < $heureDebutConnexion) {
+@@ -296,14 +301,14 @@
+                          $next=0;
+                      }
+                      else if ($heureFinConnexion >= $currCreneau+$this->pas) {
+-                         $dataArray[]=array($x,$y,$map.$result->Login.' ('.$result->NomOs.') de '.$result->HeureDebut.' à '.$result->HeureFin.'<br />');
++                         $dataArray[]=array($x,$y,$map.$ligneInfo);
+                          $map='';
+                          $currCreneau+=$this->pas;
+                          $y++;
+                          $next=0;
+                      }
+                      else {
+-                         $map.=$result->Login.' ('.$result->NomOs.') de '.$result->HeureDebut.' à '.$result->HeureFin.'<br />';
++                         $map.=$ligneInfo;
+                          $next=1;
+                      }
+                 }
+--- a/src/app/graphe/graph.php
++++ b/src/app/graphe/graph.php
+@@ -86,11 +86,13 @@
+ $salle      = null;
+ $salles     = array();
+ $composante = null;
+-$pas        = null;
++// Valeurs par défaut sûres : utilisées si le paramètre est absent, pour que les boucles
++// de création des créneaux (pilotées par le pas) progressent toujours.
++$pas        = 60;
+ $year       = null;
+-$largeur    = '';
+-$heureDebut = '';
+-$heureFin   = '';
++$largeur    = 900;
++$heureDebut = HEURE_DEBUT;
++$heureFin   = HEURE_FIN;
+ $excluDebut = '';
+ $excluFin   = '';
+ 
+@@ -164,7 +166,11 @@
+ 
+ if (isset($_GET['pas'])) {
+ 
++    // Le pas pilote le découpage des créneaux : on impose une valeur strictement positive et bornée.
+     $pas = intval($_GET['pas']);
++    if ($pas < 1 || $pas > 1440) {
++        $pas = 60;
++    }
+ }
+ 
+ if (isset($_GET['annee'])) {
+@@ -175,17 +181,28 @@
+ 
+ if (isset($_GET['largeur'])) {
+ 
++    // La largeur est transmise à pChart comme taille d'image : on la borne pour éviter
++    // une allocation mémoire démesurée.
+     $largeur = intval($_GET['largeur']);
++    if ($largeur < 300 || $largeur > 3000) {
++        $largeur = 900;
++    }
+ }
+ 
+-if (isset($_GET['heuredebut'])) {
++// Les heures servent à des calculs (strtotime, conversion en minutes) : on n'accepte
++// que le format hh:mm, avec repli sur la fenêtre d'observation par défaut.
++if (isset($_GET['heuredebut']) && preg_match('#^\d{2}:\d{2}$#', (string)$_GET['heuredebut'])) {
+ 
+-    $heureDebut = htmlspecialchars($_GET['heuredebut'], ENT_QUOTES);
++    $heureDebut = $_GET['heuredebut'];
++} else {
++    $heureDebut = HEURE_DEBUT;
+ }
+ 
+-if (isset($_GET['heurefin'])) {
++if (isset($_GET['heurefin']) && preg_match('#^\d{2}:\d{2}$#', (string)$_GET['heurefin'])) {
+ 
+-    $heureFin = htmlspecialchars($_GET['heurefin'], ENT_QUOTES);
++    $heureFin = $_GET['heurefin'];
++} else {
++    $heureFin = HEURE_FIN;
+ }
+ 
+ if (isset($_GET['excludebut'])) {
+--- a/src/app/graphe/index.php
++++ b/src/app/graphe/index.php
+@@ -135,9 +135,11 @@
+ 
+ 			$salle            = intval($_GET['salle']);
+ 			$pas              = intval($_GET['pas']);
++			if ($pas < 1 || $pas > 1440) { $pas = 60; }
+ 			$largeur          = intval($_GET['largeur']);
+-			$heureDebut       = htmlspecialchars($_GET['heuredebut'], ENT_QUOTES);
+-			$heureFin         = htmlspecialchars($_GET['heurefin'], ENT_QUOTES);
++			if ($largeur < 300 || $largeur > 3000) { $largeur = 900; }
++			$heureDebut       = preg_match('#^\d{2}:\d{2}$#', (string)($_GET['heuredebut'] ?? '')) ? $_GET['heuredebut'] : HEURE_DEBUT;
++			$heureFin         = preg_match('#^\d{2}:\d{2}$#', (string)($_GET['heurefin'] ?? '')) ? $_GET['heurefin'] : HEURE_FIN;
+ 			$joursOuvresArray = serialize($_GET['joursouvres']);
+ 
+ 			if ($datefin === '')
+@@ -336,9 +338,11 @@
+ 
+ 
+ 			$pas        = intval($_GET['pas']);
++			if ($pas < 1 || $pas > 1440) { $pas = 60; }
+ 			$largeur    = intval($_GET['largeur']);
+-			$heureDebut = htmlspecialchars($_GET['heuredebut'], ENT_QUOTES);
+-			$heureFin   = htmlspecialchars($_GET['heurefin'], ENT_QUOTES);
++			if ($largeur < 300 || $largeur > 3000) { $largeur = 900; }
++			$heureDebut = preg_match('#^\d{2}:\d{2}$#', (string)($_GET['heuredebut'] ?? '')) ? $_GET['heuredebut'] : HEURE_DEBUT;
++			$heureFin   = preg_match('#^\d{2}:\d{2}$#', (string)($_GET['heurefin'] ?? '')) ? $_GET['heurefin'] : HEURE_FIN;
+ 
+ 
+ 			$composante = htmlspecialchars($_GET['composante'], ENT_QUOTES);
+--- a/src/app/graphe/MaxComposanteGraph.class.php
++++ b/src/app/graphe/MaxComposanteGraph.class.php
+@@ -152,7 +152,7 @@
+       //prend donc en compte le fait qu'une machine ne soit présente qu'à une
+       // certaine période de l'année
+       $sql = "SELECT sum(datediff(if(date_FIN > '".$datestr2."', '".$datestr2."', date_FIN), if(date_DEBUT < '".$datestr1."', '".$datestr1."', date_DEBUT))/365)".
+-             " FROM MachinesToSalles as ms INNER JOIN Salles s ON ms.RefSalle = s.IdSalle WHERE NomSalle = '".$nomSalle."' ".
++             " FROM MachinesToSalles as ms INNER JOIN Salles s ON ms.RefSalle = s.IdSalle WHERE NomSalle = ".$pdo->quote($nomSalle)." ".
+              "AND NOT (ms.Date_FIN < '".$datestr1."' OR ms.date_DEBUT > '".$datestr2."');";
+       $query = $pdo->prepare($sql);
+       $query->execute();
+@@ -253,7 +253,7 @@
+                    'ON ms.RefSalle = s.IdSalle '.
+                    'WHERE NOT (DateFin < "'.$debut->format('Y-m-d').'" OR DateDebut > "'.$fin->format('Y-m-d').'") '.
+                    'AND NOT (HeureFin < :heureDebut OR HeureDebut > :heureFin) '.
+-                   'AND NomSalle = "'.$nomSalle.'" ';
++                   'AND NomSalle = '.$pdo->quote($nomSalle).' ';
+ 
+             $listeJO = implode(',', \Dao::unserializeListe($this->_joursOuvres));
+ 
+@@ -284,7 +284,7 @@
+                    'ON ms.RefSalle = s.IdSalle '.
+                    'WHERE NOT (DateFin < "'.$debut->format('Y-m-d').'" OR DateDebut > "'.$fin->format('Y-m-d').'") '.
+                    'AND NOT (HeureFin < :excluDebut OR HeureDebut > :excluFin) '.
+-                   'AND NomSalle = "'.$nomSalle.'" ';
++                   'AND NomSalle = '.$pdo->quote($nomSalle).' ';
+ 
+                 $listeJO = implode(',', \Dao::unserializeListe($this->_joursOuvres));
+ 
+--- a/src/app/graphe/SeuilGraph.php
++++ b/src/app/graphe/SeuilGraph.php
+@@ -408,7 +408,7 @@
+ $image.='</tr>';
+ 
+ foreach ($arraySallesCreneaux as $key => $value){
+-	$image.='<tr><td>'.$key.'</td>';
++	$image.='<tr><td>'.htmlspecialchars($key, ENT_QUOTES).'</td>';
+ 	for ($i=0;$i<$colonne;$i++)
+ 		if ($value[$i]=='') $image.='<td style="background-color:'.$bg_libre[($i/$colspan)%2].'"></td>';
+ 		else $image.=$value[$i];
+--- a/src/app/graphe/view/CpuView.class.php
++++ b/src/app/graphe/view/CpuView.class.php
+@@ -92,13 +92,13 @@
+ 
+ foreach ($listeComposantes as $c) {
+ 
+-    $content .= '<option value="'.$c->composante.'" ';
++    $content .= '<option value="'.htmlspecialchars($c->composante, ENT_QUOTES).'" ';
+ 
+     if (isset($_GET['composante']))
+         if ($c->composante == $_GET['composante'])
+             $content .= 'selected="selected"';
+ 
+-    $content .= '>'.$c->composante.'</option>';
++    $content .= '>'.htmlspecialchars($c->composante, ENT_QUOTES).'</option>';
+ }
+ 
+ $content .= '</select>';
+@@ -147,7 +147,7 @@
+         if ($optgroup != '') {
+             $content .= '</optgroup>';
+         } 
+-        $content .= '<optgroup label="'.$s->Composante.'">';
++        $content .= '<optgroup label="'.htmlspecialchars($s->Composante, ENT_QUOTES).'">';
+         $optgroup = $s->Composante;
+     }
+ 
+@@ -157,7 +157,7 @@
+         if (in_array($s->IdSalle, $_GET['salles']))
+             $content .= 'selected="selected"';
+ 
+-    $content .= '>'.$s->NomSalle.'</option>';
++    $content .= '>'.htmlspecialchars($s->NomSalle, ENT_QUOTES).'</option>';
+ }
+ 
+ if ($optgroup != '') {
+--- a/src/app/graphe/view/DureeView.class.php
++++ b/src/app/graphe/view/DureeView.class.php
+@@ -86,7 +86,7 @@
+         if ($optgroup != '') {
+             $content .= '</optgroup>';
+         } 
+-        $content .= '<optgroup label="'.$s->Composante.'">';
++        $content .= '<optgroup label="'.htmlspecialchars($s->Composante, ENT_QUOTES).'">';
+         $optgroup = $s->Composante;
+     }
+ 
+@@ -96,7 +96,7 @@
+         if ($s->IdSalle == $_GET['salle'])
+             $content .= 'selected="selected"';
+ 
+-    $content .= '>'.$s->NomSalle.'</option>';
++    $content .= '>'.htmlspecialchars($s->NomSalle, ENT_QUOTES).'</option>';
+ }
+ 
+ if ($optgroup != '') {
+--- a/src/app/graphe/view/HumainView.class.php
++++ b/src/app/graphe/view/HumainView.class.php
+@@ -75,13 +75,13 @@
+ 
+ foreach ($listeComposantes as $c) {
+ 
+-    $content .= '<option value="'.$c->composante.'" ';
++    $content .= '<option value="'.htmlspecialchars($c->composante, ENT_QUOTES).'" ';
+ 
+     if (isset($_GET['composante']))
+         if ($c->composante == $_GET['composante'])
+             $content .= 'selected="selected"';
+ 
+-    $content .= '>'.$c->composante.'</option>';
++    $content .= '>'.htmlspecialchars($c->composante, ENT_QUOTES).'</option>';
+ }
+ 
+ $content .= '</select>';
+@@ -110,7 +110,7 @@
+         if ($optgroup != '') {
+             $content .= '</optgroup>';
+         } 
+-        $content .= '<optgroup label="'.$s->Composante.'">';
++        $content .= '<optgroup label="'.htmlspecialchars($s->Composante, ENT_QUOTES).'">';
+         $optgroup = $s->Composante;
+     }
+ 
+@@ -120,7 +120,7 @@
+         if (in_array($s->IdSalle, $_GET['salles']))
+             $content .= 'selected="selected"';
+ 
+-    $content .= '>'.$s->NomSalle.'</option>';
++    $content .= '>'.htmlspecialchars($s->NomSalle, ENT_QUOTES).'</option>';
+ }
+ 
+ if ($optgroup != '') {
+--- a/src/app/graphe/view/OsView.class.php
++++ b/src/app/graphe/view/OsView.class.php
+@@ -78,13 +78,13 @@
+ 
+ foreach ($listeComposantes as $c) {
+ 
+-    $content .= '<option value="'.$c->composante.'" ';
++    $content .= '<option value="'.htmlspecialchars($c->composante, ENT_QUOTES).'" ';
+ 
+     if (isset($_GET['composante']))
+         if ($c->composante == $_GET['composante'])
+             $content .= 'selected="selected"';
+ 
+-    $content .= '>'.$c->composante.'</option>';
++    $content .= '>'.htmlspecialchars($c->composante, ENT_QUOTES).'</option>';
+ }
+ 
+ $content .= '</select>';
+@@ -117,7 +117,7 @@
+         if ($optgroup != '') {
+             $content .= '</optgroup>';
+         } 
+-        $content .= '<optgroup label="'.$s->Composante.'">';
++        $content .= '<optgroup label="'.htmlspecialchars($s->Composante, ENT_QUOTES).'">';
+         $optgroup = $s->Composante;
+     }
+ 
+@@ -127,7 +127,7 @@
+         if (in_array($s->IdSalle, $_GET['salles']))
+             $content .= 'selected="selected"';
+ 
+-    $content .= '>'.$s->NomSalle.'</option>';
++    $content .= '>'.htmlspecialchars($s->NomSalle, ENT_QUOTES).'</option>';
+ }
+ 
+ if ($optgroup != '') {
+--- a/src/app/graphe/view/SeuilView.php
++++ b/src/app/graphe/view/SeuilView.php
+@@ -71,13 +71,13 @@
+ 
+ foreach ($listeComposantes as $c) {
+ 
+-    $content .= '<option value="'.$c->composante.'" ';
++    $content .= '<option value="'.htmlspecialchars($c->composante, ENT_QUOTES).'" ';
+ 
+     if (isset($_GET['composante']))
+         if ($c->composante == $_GET['composante'])
+             $content .= 'selected="selected"';
+ 
+-    $content .= '>'.$c->composante.'</option>';
++    $content .= '>'.htmlspecialchars($c->composante, ENT_QUOTES).'</option>';
+ }
+ 
+ $content .= '</select>';
+@@ -106,7 +106,7 @@
+         if ($optgroup != '') {
+             $content .= '</optgroup>';
+         } 
+-        $content .= '<optgroup label="'.$s->Composante.'">';
++        $content .= '<optgroup label="'.htmlspecialchars($s->Composante, ENT_QUOTES).'">';
+         $optgroup = $s->Composante;
+     }
+ 
+@@ -116,7 +116,7 @@
+         if (in_array($s->IdSalle, $_GET['salles']))
+             $content .= 'selected="selected"';
+ 
+-    $content .= '>'.$s->NomSalle.'</option>';
++    $content .= '>'.htmlspecialchars($s->NomSalle, ENT_QUOTES).'</option>';
+ }
+ 
+ if ($optgroup != '') {
+--- a/src/checkRoles.php
++++ b/src/checkRoles.php
+@@ -54,7 +54,9 @@
+  */
+ $pdo = Dao::getInstance();
+ 
+-$sql = 'SELECT login FROM Admins WHERE login = :login';
++# Admins.login a une collation insensible à la casse et aux accents. On exige une correspondance
++# binaire exacte (BINARY) entre l'utilisateur authentifié et le login enregistré pour accorder le rôle admin.
++$sql = 'SELECT login FROM Admins WHERE login = BINARY :login';
+ 
+ $query = $pdo->prepare($sql);
+ $query->bindValue(':login', $_SESSION['CURRENT_USER'], PDO::PARAM_STR);
+--- a/src/index.php
++++ b/src/index.php
+@@ -55,23 +55,33 @@
+ session_start();
+ 
+ 
+-# On stocke dans la variable de sessioon $_SESSION['CURRENT_USER'] la 1re des 3 variables $_SERVER['REMOTE_USER'], $_SERVER['REDIRECT_REMOTE_USER'], $_SERVER['PHP_AUTH_USER']
+-# qui est instanciée et on utilise partout la variable de session pour référencer l'utilisateur connecté. Ça permet d'être plus robuste aux différentes configurations Apache
++# On récupère l'utilisateur authentifié par Apache dans la 1re des 3 variables $_SERVER['REMOTE_USER'], $_SERVER['REDIRECT_REMOTE_USER'], $_SERVER['PHP_AUTH_USER']
++# qui est instanciée. Ça permet d'être plus robuste aux différentes configurations Apache
+ # qu'on peut trouver dans la communauté des cocottes.
+-if (!isset($_SESSION['CURRENT_USER']))
++$utilisateurApache = null;
++if (isset($_SERVER['REMOTE_USER']))
+ {
+-	if (isset($_SERVER['REMOTE_USER']))
+-	{
+-		$_SESSION['CURRENT_USER'] = $_SERVER['REMOTE_USER'];
+-	}
+-	else if (isset($_SERVER['REDIRECT_REMOTE_USER']))
+-	{
+-		$_SESSION['CURRENT_USER'] = $_SERVER['REDIRECT_REMOTE_USER'];
+-	}
+-	else if (isset($_SERVER['PHP_AUTH_USER']))
++	$utilisateurApache = $_SERVER['REMOTE_USER'];
++}
++else if (isset($_SERVER['REDIRECT_REMOTE_USER']))
++{
++	$utilisateurApache = $_SERVER['REDIRECT_REMOTE_USER'];
++}
++else if (isset($_SERVER['PHP_AUTH_USER']))
++{
++	$utilisateurApache = $_SERVER['PHP_AUTH_USER'];
++}
++
++# On compare l'identité Apache de CHAQUE requête à celle de la session. Si elle change,
++# on repart d'une session neuve pour ne pas conserver le contexte de l'utilisateur précédent.
++if ($utilisateurApache !== null)
++{
++	if (isset($_SESSION['CURRENT_USER']) && $_SESSION['CURRENT_USER'] !== $utilisateurApache)
+ 	{
+-		$_SESSION['CURRENT_USER'] = $_SERVER['PHP_AUTH_USER'];
++		$_SESSION = array();
++		session_regenerate_id(true);
+ 	}
++	$_SESSION['CURRENT_USER'] = $utilisateurApache;
+ }
+ 
+ if (!isset($_SESSION['CURRENT_USER'])) {
+@@ -112,10 +122,6 @@
+ 
+         require_once 'app/suivi/index.php';
+ 
+-    } else if ($_GET['app'] === 'actu' && $_SESSION['role'] === 'ROLE_ADMIN') {
+-
+-        require_once 'app/actu/index.php';
+-
+     } else if ($_GET['app'] === 'admin' && $_SESSION['role'] === 'ROLE_ADMIN') {
+ 
+         require_once 'app/admin/index.php';
+--- a/src/js/tooltip.js
++++ b/src/js/tooltip.js
+@@ -56,11 +56,20 @@
+ 
+     content: function() {
+ 
+-	var element = $(this);
+-	
++	// Le title de la carte contient des données de connexions (login, OS...) venues de la base.
++	// On le rend comme TEXTE et non comme HTML, pour qu'un login contenant du balisage ne soit
++	// pas interprété. Les séparateurs "<br />" ajoutés par le serveur restent des sauts de ligne.
++	var titre = $(this).attr('title') || '';
++	var conteneur = $('<div></div>');
++	var morceaux = titre.split('<br />');
+ 
+-	
++	$.each(morceaux, function(i, morceau) {
++	    if (i > 0) {
++		conteneur.append(document.createElement('br'));
++	    }
++	    conteneur.append(document.createTextNode(morceau));
++	});
+ 
+-	return element.attr('title');
++	return conteneur;
+     }
+ });
+--- a/src/logout.php
++++ b/src/logout.php
+@@ -56,5 +56,5 @@
+ session_destroy();
+ unset($_SESSION);
+ $relative_path_app=dirname($_SERVER['REQUEST_URI']);
+-$protocol=$_SERVER['HTTPS']=="on"?"https":"http";
++$protocol=(isset($_SERVER['HTTPS']) && $_SERVER['HTTPS']=="on")?"https":"http";
+ header('Location:'.$protocol.'://logout@'.$_SERVER['HTTP_HOST'].$relative_path_app.'/reallogout.php');
+--- a/src/reallogout.php
++++ b/src/reallogout.php
+@@ -1,4 +1,3 @@
+ <?php
+-$relative_path_app=dirname($_SERVER['REQUEST_URI']);
+-$protocol=$_SERVER['HTTPS']=="on"?"https":"http";
+-header('Location:'.$protocol.'://'.$_SERVER['HTTP_HOST'].$relative_path_app.'/index.php');
++# Redirection relative vers l'application : pas de dépendance à l'en-tête Host fourni par le client.
++header('Location: index.php');
+--- a/src/setup.php
++++ b/src/setup.php
+@@ -258,13 +258,16 @@
+ # Si pas de valeur dans la table Admins alors on est à la première installation
+ # et on met FIRST_ADMIN, sinon on ne fait rien (on garde les admins existants)
+ if ( $results->total == 0) {
+-        $sql = sprintf("INSERT INTO `Admins` VALUES ('%s')",FIRST_ADMIN); 
++        $sql = "INSERT INTO `Admins` VALUES (".$dbh->quote(FIRST_ADMIN).")";
+ 	    sql_wrapper($dbh,$sql,"insertion du premier compte administrateur");
+ }
+ 
+-$sql =  'DELETE `MachinesToSalles` FROM `MachinesToSalles` LEFT JOIN `Salles` ON `RefSAlle`=`idSalle` WHERE (`Site`="'.$site.'" OR  `Site` IS NULL);';
++# Toutes les valeurs issues du CSV (ou de la constante SITES) sont échappées avec quote()
++# avant d'être placées dans le SQL.
++$siteSql = $dbh->quote($site);
++$sql =  'DELETE `MachinesToSalles` FROM `MachinesToSalles` LEFT JOIN `Salles` ON `RefSAlle`=`idSalle` WHERE (`Site`='.$siteSql.' OR  `Site` IS NULL);';
+ sql_wrapper($dbh,$sql,"vidage de la table MachinesToSalle");
+-$sql = 'DELETE FROM `Salles` WHERE (`Site`="'.$site.'" OR  `Site` IS NULL);';
++$sql = 'DELETE FROM `Salles` WHERE (`Site`='.$siteSql.' OR  `Site` IS NULL);';
+ sql_wrapper($dbh,$sql,"vidage de la table Salle");
+ 
+ $sql = '';
+@@ -282,20 +285,20 @@
+         } 
+ 
+         if ($nb_sites>0) {
+-            $sql = sprintf("INSERT INTO `Salles` (NomSalle,Composante,Site) VALUES ('%s','%s','%s')",$salle['salle'],$salle['composante'],$site);
++            $sql = "INSERT INTO `Salles` (NomSalle,Composante,Site) VALUES (".$dbh->quote($salle['salle']).",".$dbh->quote($salle['composante']).",".$siteSql.")";
+         } else {
+-            $sql = sprintf("INSERT INTO `Salles` (NomSalle,Composante) VALUES ('%s','%s')",$salle['salle'],$salle['composante']);
++            $sql = "INSERT INTO `Salles` (NomSalle,Composante) VALUES (".$dbh->quote($salle['salle']).",".$dbh->quote($salle['composante']).")";
+         }
+ 
+         $idSalle = sql_wrapper($dbh,$sql,sprintf("insertion de la salle %s ( %s )",$salle['salle'],$salle['composante']));
+ 
+         $sql = 'INSERT INTO `MachinesToSalles` VALUES ';
+     }
+-   
++
+     if ($sql !== 'INSERT INTO `MachinesToSalles` VALUES ') {
+         $sql .= ',';
+-    } 
+-    $sql .= sprintf("('%s',%d,'%s','%s')",$salle['machine'],$idSalle,$salle['Date_DEBUT'],$salle['Date_FIN']);
++    }
++    $sql .= "(".$dbh->quote($salle['machine']).",".intval($idSalle).",".$dbh->quote($salle['Date_DEBUT']).",".$dbh->quote($salle['Date_FIN']).")";
+ 
+     $salleUnique      = $salle['salle'];
+     $composanteUnique = $salle['composante'];

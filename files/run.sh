@@ -70,6 +70,12 @@ fi
 
 # UIDs may differ from the image that created the volumes (mysql and apache were swapped before Alpine 3.13)
 find $HTDOCS \( -path $HTDOCS/csv -o -path $HTDOCS/config-coq \) -prune -o \! -user apache -exec chown -h apache:apache {} +
+
+# config.php contient le mot de passe de la base : on le rend illisible aux autres comptes
+# du conteneur (coq, mysql). S'applique aussi aux installations déjà déployées.
+if [ -f $HTDOCS/config.php ]; then
+    chmod 640 $HTDOCS/config.php
+fi
 DATADIR_OWNER=""
 if [ -d $DATADIR/mysql ]; then
     DATADIR_OWNER="$(stat -c '%u:%g' $DATADIR/mysql)"
@@ -186,8 +192,9 @@ if [ ! -f $HTDOCS/.htaccess ]; then
     Require valid-user
 EOF
 
-   ADMIN_PASSWORD="$(pwgen -1 -B 8)"
-   /usr/bin/htpasswd -b -c  $HTDOCS/.htpasswd admin $ADMIN_PASSWORD
+   ADMIN_PASSWORD="$(pwgen -1 -B 16)"
+   # -B : hachage bcrypt plutôt que le MD5 (apr1) par défaut d'Apache
+   /usr/bin/htpasswd -B -b -c  $HTDOCS/.htpasswd admin $ADMIN_PASSWORD
 fi;
 
 # Start mariadb
