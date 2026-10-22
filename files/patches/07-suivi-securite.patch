@@ -1,0 +1,181 @@
+--- a/src/app/suivi/index.php
++++ b/src/app/suivi/index.php
+@@ -53,7 +53,11 @@
+  *
+  */
+ 
++// Date du formulaire (jj/mm/aaaa hh:mm) au format MySQL, ou null si elle n'est pas valide
+ function timePickerToMySQL($date) {
++    if (!preg_match('#^(\d{2})/(\d{2})/(\d{4})( \d{2}:\d{2}(:\d{2})?)?$#', $date, $m) || !checkdate($m[2], $m[1], $m[3])) {
++        return null;
++    }
+     return preg_replace('#(\d+)/(\d+)/(\d+)#','${3}-${2}-${1}', $date);
+ }
+ 
+@@ -61,19 +65,26 @@
+     return preg_replace('#(\d+)-(\d+)-(\d+)#','${3}/${2}/${1}', $date);
+ }
+ 
+-require_once 'utils.php';
++// Paramètre texte de la recherche, vide s'il est absent
++function paramRecherche($nom) {
++    return (isset($_GET[$nom]) && is_string($_GET[$nom])) ? $_GET[$nom] : '';
++}
+ 
+-if (isset($_GET['dated']) && $_GET['dated'] !== '') {
+-    $datedebut = timePickerToMysql($_GET['dated']);
+-    $tableConnexions = \Dao::getTableConnexions(new \DateTime($datedebut)); 
++$nomMachine = paramRecherche('nommachine');
++$ipMachine  = paramRecherche('ipmachine');
++$nomOs      = paramRecherche('os');
++$login      = paramRecherche('login');
++
++$datedebut = timePickerToMySQL(paramRecherche('dated'));
++if ($datedebut !== null) {
++    $tableConnexions = \Dao::getTableConnexions(new \DateTime($datedebut));
+ } else {
+     $datedebut = date('Y-m-d 00:00');
+     $tableConnexions = 'Connexions';
+ }
+ 
+-if (isset($_GET['datef']) && $_GET['datef'] !== '') {
+-    $datefin = timePickerToMysql($_GET['datef']);
+-} else {
++$datefin = timePickerToMySQL(paramRecherche('datef'));
++if ($datefin === null) {
+     $datefin = date('Y-m-d 23:59:59');
+ }
+ 
+@@ -117,8 +128,8 @@
+ 
+ $wrapper .= '<input type="text" id="nommachine" name="nommachine" ';
+ 
+-if (isset($_GET['nommachine']) && $_GET['nommachine'] !== '')
+-    $wrapper .= 'value="'.$_GET['nommachine'].'"';
++if ($nomMachine !== '')
++    $wrapper .= 'value="'.htmlspecialchars($nomMachine, ENT_QUOTES).'"';
+ 
+ $wrapper .= ' />';
+ 
+@@ -126,8 +137,8 @@
+ 
+ $wrapper .= '<input type="text" id="ipmachine" name="ipmachine" ';
+ 
+-if (isset($_GET['ipmachine']) && $_GET['ipmachine'] !== '')
+-    $wrapper .= 'value="'.$_GET['ipmachine'].'"';
++if ($ipMachine !== '')
++    $wrapper .= 'value="'.htmlspecialchars($ipMachine, ENT_QUOTES).'"';
+ 
+ $wrapper .= ' />';
+ 
+@@ -139,12 +150,12 @@
+ 
+ foreach ($listeOs as $os) {
+ 
+-    $wrapper .= '<option value="'.$os->NomOs.'" ';
++    $wrapper .= '<option value="'.htmlspecialchars($os->NomOs, ENT_QUOTES).'" ';
+ 
+-    if (isset($_GET['os']) && $os->NomOs === $_GET['os'])
++    if ($os->NomOs === $nomOs)
+         $wrapper .= 'selected="selected"';
+ 
+-    $wrapper .= '>'.$os->NomOs.'</option>';
++    $wrapper .= '>'.htmlspecialchars($os->NomOs).'</option>';
+ }
+ 
+ $wrapper .= '</select>';
+@@ -152,8 +163,8 @@
+ $wrapper .= '<label for="login">Login</label>';
+ $wrapper .= '<input type="text" name="login" id="login" ';
+ 
+-if (isset($_GET['login']) && $_GET['login'] !== '')
+-    $wrapper .= 'value="'.$_GET['login'].'"';
++if ($login !== '')
++    $wrapper .= 'value="'.htmlspecialchars($login, ENT_QUOTES).'"';
+ 
+ $wrapper .= ' />';
+ 
+@@ -164,49 +175,46 @@
+ $wrapper .= '</div>';
+ 
+ if (isset($_SESSION['site']) && $_SESSION['site']!=='') {
+-    $sql = 'SELECT * FROM '.$tableConnexions.' AS c INNER JOIN MachinesToSalles AS ms INNER JOIN Salles as s ON c.NomMachine=ms.NomMachine AND ms.refSalle=s.idSalle WHERE site="'.$_SESSION['site'].'"AND NOT (DateFin < ms.Date_DEBUT OR DateDebut > ms.Date_FIN) AND ';
++    $sql = 'SELECT * FROM '.$tableConnexions.' AS c INNER JOIN MachinesToSalles AS ms INNER JOIN Salles as s ON c.NomMachine=ms.NomMachine AND ms.refSalle=s.idSalle WHERE site=:site AND NOT (DateFin < ms.Date_DEBUT OR DateDebut > ms.Date_FIN) AND ';
+ } else {
+     $sql = 'SELECT * FROM '.$tableConnexions.' AS c WHERE ';
+ }
+ 
+-$sql .= 'NOT (DateFin < :datedebut OR DateDebut > :datefin) '; 
++$sql .= 'NOT (DateFin < :datedebut OR DateDebut > :datefin) ';
+ 
+-if (isset($_GET['nommachine']) && $_GET['nommachine'] !== '')
++if ($nomMachine !== '')
+     $sql .= 'AND (c.NomMachine LIKE :nommachine OR c.NomVM LIKE :nommachine) ';
+ 
+-if (isset($_GET['ipmachine']) && $_GET['ipmachine'] !== '')
++if ($ipMachine !== '')
+     $sql .= 'AND (c.IPMachine LIKE :ipmachine OR c.IPVM LIKE :ipmachine) ';
+ 
+-if (isset($_GET['os']) && $_GET['os'] !== '')
++if ($nomOs !== '')
+     $sql .= 'AND NomOs = :os ';
+ 
+-if (isset($_GET['login']) && $_GET['login'] !== '')
++if ($login !== '')
+     $sql .= 'AND Login LIKE :login ';
+ 
+ $sql .= 'ORDER BY DateDebut DESC';
+ 
+ $query = $pdo->prepare($sql);
+ 
++if (isset($_SESSION['site']) && $_SESSION['site']!=='')
++    $query->bindValue(':site', $_SESSION['site'], PDO::PARAM_STR);
++
+ $query->bindParam(':datedebut', $datedebut, PDO::PARAM_STR);
+ $query->bindParam(':datefin', $datefin, PDO::PARAM_STR);
+ 
+-if (isset($_GET['nommachine']) && $_GET['nommachine'] !== '') {
+-    $nomMachine = $_GET['nommachine'];
+-    $query->bindParam(':nommachine', $nomMachine, PDO::PARAM_STR);
+- }
+-
+-if (isset($_GET['ipmachine']) && $_GET['ipmachine'] !== '') {
+-    $ipMachine = '%'.$_GET['ipmachine'].'%';
+-    $query->bindParam(':ipmachine', $ipMachine, PDO::PARAM_STR);
+- }
+-
+-if (isset($_GET['os']) && $_GET['os'] !== '')
+-    $query->bindParam(':os', $_GET['os'], PDO::PARAM_STR);
+-
+-if (isset($_GET['login']) && $_GET['login'] !== '') {
+-    $login = '%'.$_GET['login'].'%';
+-    $query->bindParam(':login', $login, PDO::PARAM_STR);
+- }
++if ($nomMachine !== '')
++    $query->bindValue(':nommachine', $nomMachine, PDO::PARAM_STR);
++
++if ($ipMachine !== '')
++    $query->bindValue(':ipmachine', '%'.$ipMachine.'%', PDO::PARAM_STR);
++
++if ($nomOs !== '')
++    $query->bindValue(':os', $nomOs, PDO::PARAM_STR);
++
++if ($login !== '')
++    $query->bindValue(':login', '%'.$login.'%', PDO::PARAM_STR);
+ 
+ $query->execute();
+ 
+@@ -241,9 +249,11 @@
+ 
+     $wrapper .= '<tbody>';
+ 
++    $h = function ($valeur) { return htmlspecialchars((string) $valeur, ENT_QUOTES); };
++
+     foreach ($connexions as $c) {
+-        $url = str_replace('_LOGIN_',$c->Login, URL_ANNUAIRE);
+-        $wrapper .= '<tr><td class="rownums"></td><td>'.$c->DateDebut.'</td><td>'.$c->DateFin.'</td><td>'.$c->Duree.'</td><td>'.$c->NomMachine.'</td><td>'.$c->IPMachine.'</td><td>'.$c->NomOs.'</td><td>'.$c->NomVM.'</td><td>'.$c->IPVM.'</td><td><a target="_blank" href="'.$url.'">'.$c->Login.'</a></td></tr>';
++        $url = str_replace('_LOGIN_', rawurlencode($c->Login), URL_ANNUAIRE);
++        $wrapper .= '<tr><td class="rownums"></td><td>'.$h($c->DateDebut).'</td><td>'.$h($c->DateFin).'</td><td>'.$h($c->Duree).'</td><td>'.$h($c->NomMachine).'</td><td>'.$h($c->IPMachine).'</td><td>'.$h($c->NomOs).'</td><td>'.$h($c->NomVM).'</td><td>'.$h($c->IPVM).'</td><td><a target="_blank" href="'.$h($url).'">'.$h($c->Login).'</a></td></tr>';
+     }
+ 
+     $wrapper .= '</tbody>';

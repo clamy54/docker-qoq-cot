@@ -1,0 +1,12 @@
+--- a/src/bonne_annee.php
++++ b/src/bonne_annee.php
+@@ -60,7 +60,8 @@
+ $password = SQL_PASSWORD;
+ 
+ try {
+-	$dbh = new PDO($dsn, $user, $password);
++	// Comportement PDO de PHP 7 : erreurs SQL silencieuses
++	$dbh = new PDO($dsn, $user, $password, array(PDO::ATTR_ERRMODE => PDO::ERRMODE_SILENT));
+ 
+ } catch (PDOException $e) {
+ 	echo 'Connection failed: ' . $e->getMessage();

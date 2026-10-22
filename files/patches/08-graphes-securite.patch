@@ -1,0 +1,55 @@
+--- a/src/app/graphe/index.php
++++ b/src/app/graphe/index.php
+@@ -66,7 +66,7 @@
+ 
+ $where='';
+ if (isset($_SESSION['site']) && $_SESSION['site']!=='') {
+-    $where='WHERE Site="'.$_SESSION['site'].'"';
++    $where='WHERE Site='.$pdo->quote($_SESSION['site']);
+ }
+ 
+ $sql = "SELECT * FROM Salles $where ORDER BY Composante,NomSalle ASC";
+@@ -502,11 +502,16 @@
+                     $salles = '';
+ 
+                 $composante       = htmlspecialchars($_GET['composante'], ENT_QUOTES);
+-                $heureDebut       = htmlspecialchars($_GET['heuredebut'], ENT_QUOTES);
+-                $heureFin         = htmlspecialchars($_GET['heurefin'], ENT_QUOTES);
+-                $pas              = $_GET['pas'];
+-                $arrayJoursOuvres = $_GET['joursouvres'];
+-                $critereSeuil     = htmlspecialchars($_GET['critereSeuil'], ENT_QUOTES);
++                // Heures au format hh:mm, pas en minutes et jours ouvrés de 0 à 6 : ils servent aux calculs des créneaux
++                $heureDebut       = preg_match('#^\d{2}:\d{2}$#', (string) ($_GET['heuredebut'] ?? '')) ? $_GET['heuredebut'] : '';
++                $heureFin         = preg_match('#^\d{2}:\d{2}$#', (string) ($_GET['heurefin'] ?? '')) ? $_GET['heurefin'] : '';
++                $pas              = intval($_GET['pas'] ?? 0) > 0 ? intval($_GET['pas']) : 60;
++                $arrayJoursOuvres = isset($_GET['joursouvres']) && is_array($_GET['joursouvres'])
++                    ? array_values(array_filter(array_map('intval', $_GET['joursouvres']), function ($j) { return $j >= 0 && $j <= 6; }))
++                    : array();
++                if (empty($arrayJoursOuvres))
++                    $arrayJoursOuvres = '';
++                $critereSeuil     = array_key_exists((string) ($_GET['critereSeuil'] ?? ''), $arrayCriteresSeuil) ? $_GET['critereSeuil'] : '';
+ 
+ 		if ($date == '' or $datefin == '')
+ 		{
+--- a/src/app/graphe/SeuilGraph.php
++++ b/src/app/graphe/SeuilGraph.php
+@@ -169,7 +169,7 @@
+ 
+ $salles=\Dao::unserializeListe($salles);
+ if ($composante != '') {
+-	$sqlSalleOuComposante = 'a.Composante="'.$composante.'" ';
++	$sqlSalleOuComposante = 'a.Composante='.$pdo->quote($composante).' ';
+ } else {
+ 	$clauseIn = implode(",", $salles);
+ 	$sqlSalleOuComposante = 'a.IdSalle IN ('.$clauseIn.') ';
+--- a/src/app/graphe/view/SeuilView.php
++++ b/src/app/graphe/view/SeuilView.php
+@@ -154,7 +154,7 @@
+ 
+     $content .= '<input type="checkbox" name="joursouvres[]" id="'.$arrayJours[($i+1)%7].'" value="'.(($i+1)%7).'"';
+ 
+-    if (in_array(($i+1)%7, $arrayJoursOuvres))
++    if (is_array($arrayJoursOuvres) && in_array(($i+1)%7, $arrayJoursOuvres))
+          $content .= ' checked="checked"';
+ 
+     $content .= ' />';

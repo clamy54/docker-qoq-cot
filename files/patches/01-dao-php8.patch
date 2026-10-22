@@ -1,0 +1,44 @@
+--- a/src/lib/Dao.class.php
++++ b/src/lib/Dao.class.php
+@@ -75,7 +75,11 @@
+ 
+             try {
+ 
+-                self::$_instance = new PDO(SQL_DSN, SQL_USERNAME, SQL_PASSWORD);
++                // Comportement PDO de PHP 7 : erreurs SQL silencieuses et valeurs renvoyées sous forme de chaînes
++                self::$_instance = new PDO(SQL_DSN, SQL_USERNAME, SQL_PASSWORD, array(
++                    PDO::ATTR_ERRMODE => PDO::ERRMODE_SILENT,
++                    PDO::ATTR_STRINGIFY_FETCHES => true,
++                ));
+ 
+             } catch (PDOException $e) {
+ 
+@@ -89,7 +93,7 @@
+         return self::$_instance; 
+     }
+ 
+-    public function getTableConnexions($date) {
++    public static function getTableConnexions($date) {
+         $table='Connexions';
+         if (defined('CONNEXIONS_CACHE')) {
+             $ConnexionsCache=CONNEXIONS_CACHE;
+@@ -103,5 +107,19 @@
+         return $table;
+     }
+ 
++    /**
++     * Désérialise une liste transmise dans l'URL (salles, jours ouvrés) sans instancier d'objet
++     * et en ne gardant que des entiers ou la valeur vide
++     */
++    public static function unserializeListe($serialise) {
++        $liste = is_string($serialise) ? unserialize($serialise, array('allowed_classes' => false)) : $serialise;
++        if (!is_array($liste)) {
++            return array();
++        }
++        return array_map(function ($valeur) {
++            return is_numeric($valeur) ? (string) intval($valeur) : '';
++        }, $liste);
++    }
++
+ }
+ ?>

@@ -1,0 +1,14 @@
+--- a/src/lib/pChart2.0-for-PHP7-2.1.4b/class/pImage.class.php
++++ b/src/lib/pChart2.0-for-PHP7-2.1.4b/class/pImage.class.php
+@@ -131,6 +131,11 @@
+ 			return -1;
+ 		}
+ 
++		/* Sans dataset attaché, PHP 7 créait l'objet implicitement ; PHP 8 lève une erreur */
++		if (is_null($this->DataSet)) {
++			$this->DataSet = new stdClass();
++		}
++
+ 		$this->GraphAreaX1 = $X1;
+ 		$this->DataSet->Data["GraphArea"]["X1"] = $X1;
+ 		$this->GraphAreaY1 = $Y1;

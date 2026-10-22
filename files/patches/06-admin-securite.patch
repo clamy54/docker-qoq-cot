@@ -1,0 +1,204 @@
+--- a/src/index.php
++++ b/src/index.php
+@@ -81,6 +81,11 @@
+     exit;
+ }
+ 
++// Jeton anti-CSRF des actions d'administration
++if (empty($_SESSION['CSRF_TOKEN'])) {
++    $_SESSION['CSRF_TOKEN'] = bin2hex(random_bytes(32));
++}
++
+ require_once 'config.php';
+ require_once 'config_interne.php';
+ require_once 'lib/Dao.class.php';
+--- a/src/checkRoles.php
++++ b/src/checkRoles.php
+@@ -54,9 +54,10 @@
+  */
+ $pdo = Dao::getInstance();
+ 
+-$sql = 'SELECT login FROM Admins WHERE login = "'.$_SESSION['CURRENT_USER'].'"';
++$sql = 'SELECT login FROM Admins WHERE login = :login';
+ 
+ $query = $pdo->prepare($sql);
++$query->bindValue(':login', $_SESSION['CURRENT_USER'], PDO::PARAM_STR);
+ 
+ $query->execute();
+ $results = $query->fetch(PDO::FETCH_OBJ);
+--- a/src/app/admin/index.php
++++ b/src/app/admin/index.php
+@@ -52,8 +52,24 @@
+  * 51 Franklin Street, Fifth Floor Boston, MA 02110-1301 USA
+  * 
+  */
++// Ligne du tableau des administrateurs
++function ligneAdmin($login)
++{
++    $login = htmlspecialchars($login, ENT_QUOTES);
++
++    return '<tr><td>'.$login.'</td><td><a id="'.$login.'" style="clear:both;padding:5px;" class="ui-button ui-widget-content ui-corner-all del_admin"><img  align="absmiddle" src="img/delete.png">&nbsp;Supprimer&nbsp;</a></td></tr>';
++}
++
+ if (isset($_GET['action'])) {
+ 
++    // Les actions modifient la base : uniquement en POST avec le jeton anti-CSRF de la session
++    if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !isset($_POST['csrf']) || !is_string($_POST['csrf'])
++        || !hash_equals($_SESSION['CSRF_TOKEN'], $_POST['csrf'])) {
++        http_response_code(403);
++        echo 'Requête refusée';
++        exit;
++    }
++
+     switch ($_GET['action']) {
+ 
+     case 'add':
+@@ -95,7 +111,7 @@
+ 
+     if ($admin->login === $_SESSION['CURRENT_USER'])
+         continue;
+-    $wrapper .= '<tr><td>'.$admin->login.'</td><td><a id="'.$admin->login.'" style="clear:both;padding:5px;" class="ui-button ui-widget-content ui-corner-all del_admin"><img  align="absmiddle" src="img/delete.png">&nbsp;Supprimer&nbsp;</a></td></tr>';
++    $wrapper .= ligneAdmin($admin->login);
+ }
+ 
+ $wrapper .= '</tbody>';
+@@ -106,6 +122,7 @@
+ $wrapper .= '<form method="post" action="index.php">';
+ $wrapper .= '<label for="login">Login : </label>';
+ $wrapper .= '<input id="login" name="login" />';
++$wrapper .= '<input type="hidden" id="csrf" name="csrf" value="'.$_SESSION['CSRF_TOKEN'].'" />';
+ $wrapper .= '<a id="add_admin" style="clear:both;padding:5px;" class="ui-button ui-widget-content ui-corner-all"><img  align="absmiddle" src="img/add.png">&nbsp;Ajouter un admin&nbsp;</a>';
+ 
+ 
+@@ -120,6 +137,6 @@
+ 
+ $script .= '<script type="text/javascript" src="js/jquery-ui/js/jquery.js"></script>';
+ $script .= '<script type="text/javascript" src="js/jquery-ui/js/jquery-ui.js"></script>';
+-$script .= '<script type="text/javascript" src="js/controller.js"></script>';
++$script .= '<script type="text/javascript" src="js/controller.js?v=2"></script>';
+ 
+ require_once 'layout.php';
+--- a/src/app/admin/add.php
++++ b/src/app/admin/add.php
+@@ -54,9 +54,12 @@
+  */
+ $pdo = Dao::getInstance();
+ 
+-$sql = 'SELECT login FROM Admins WHERE login = "'.$_POST['login'].'"';
++$login = (isset($_POST['login']) && is_string($_POST['login'])) ? $_POST['login'] : '';
++
++$sql = 'SELECT login FROM Admins WHERE login = :login';
+ 
+ $query = $pdo->prepare($sql);
++$query->bindValue(':login', $login, PDO::PARAM_STR);
+ 
+ $query->execute();
+ $listeAdmin = $query->fetchAll(PDO::FETCH_OBJ);
+@@ -65,15 +68,16 @@
+ 
+     echo 1;
+ 
+- } else if ($_POST['login'] === '') {
++ } else if ($login === '') {
+ 
+     echo 2;
+ 
+  } else {
+ 
+-    $sql = 'INSERT INTO Admins (login) VALUES ( "'.$_POST['login'].'")';
++    $sql = 'INSERT INTO Admins (login) VALUES (:login)';
+ 
+     $query = $pdo->prepare($sql);
++    $query->bindValue(':login', $login, PDO::PARAM_STR);
+ 
+     $query->execute();
+ 
+@@ -90,7 +94,7 @@
+ 
+         if ($admin->login === $_SESSION['CURRENT_USER'])
+             continue;
+-        $liste .= '<tr><td>'.$admin->login.'</td><td><a id="'.$admin->login.'" style="clear:both;padding:5px;" class="ui-button ui-widget-content ui-corner-all del_admin"><img  align="absmiddle" src="img/delete.png">&nbsp;Supprimer&nbsp;</a></td></tr>';
++        $liste .= ligneAdmin($admin->login);
+     }
+ 
+     echo $liste;
+--- a/src/app/admin/delete.php
++++ b/src/app/admin/delete.php
+@@ -54,9 +54,13 @@
+  */
+ $pdo = Dao::getInstance();
+ 
+-$sql = 'DELETE FROM Admins WHERE login = "'.$_GET['login'].'"';
++$login = (isset($_POST['login']) && is_string($_POST['login'])) ? $_POST['login'] : '';
+ 
+-$pdo->exec($sql);
++$sql = 'DELETE FROM Admins WHERE login = :login';
++
++$query = $pdo->prepare($sql);
++$query->bindValue(':login', $login, PDO::PARAM_STR);
++$query->execute();
+ 
+ $sqlAllAdmin = 'SELECT login FROM Admins ORDER BY login ASC';
+ 
+@@ -71,7 +75,7 @@
+ 
+     if ($admin->login === $_SESSION['CURRENT_USER'])
+         continue;
+-    $liste .= '<tr><td>'.$admin->login.'</td><td><a id="'.$admin->login.'" style="clear:both;padding:5px;" class="ui-button ui-widget-content ui-corner-all del_admin"><img  align="absmiddle" src="img/delete.png">&nbsp;Supprimer&nbsp;</a></td></tr>';
++    $liste .= ligneAdmin($admin->login);
+ }
+ 
+ echo $liste;
+--- a/src/js/controller.js
++++ b/src/js/controller.js
+@@ -4,7 +4,7 @@
+ 
+ 	var newadmin = $('#login').val();
+ 
+-	$.post('index.php?app=admin&action=add', {login: newadmin}, function(data) {
++	$.post('index.php?app=admin&action=add', {login: newadmin, csrf: $('#csrf').val()}, function(data) {
+ 
+ 	    if (data == "1" || data == "2") {
+ 
+@@ -26,9 +26,14 @@
+ 		$('tbody').append(data);
+ 		initSuppr();
+ 	    }
+-	});
++	}).fail(requeteRefusee);
+     });
+ 
++    function requeteRefusee() {
++
++	alert("Action refusée : rechargez la page et recommencez");
++    }
++
+     $( "#dialog-confirm" ).dialog({ autoOpen: false });
+  
+     function initSuppr() {
+@@ -42,21 +47,20 @@
+ 
+     function triggerDialog(admin) {
+ 
+-	$('#nomadmin').empty();
+-	$('#nomadmin').append(admin);
++	$('#nomadmin').text(admin);
+ 
+ 	$( "#dialog-confirm" ).dialog("open").dialog({
+ 	    resizable: false,
+ 	    modal: true,
+ 	    buttons: {
+ 		"Supprimer": function() {
+-		    $.get('index.php?app=admin&action=delete', {login: admin}, function(data) {
++		    $.post('index.php?app=admin&action=delete', {login: admin, csrf: $('#csrf').val()}, function(data) {
+ 
+ 			$('tbody').empty();
+ 			$('tbody').append(data);
+-			
++
+ 			initSuppr();
+-		    });
++		    }).fail(requeteRefusee);
+ 		    $( this ).dialog( "close" );
+ 		},
+ 		"Annuler": function() {

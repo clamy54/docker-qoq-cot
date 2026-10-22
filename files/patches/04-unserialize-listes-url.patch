@@ -1,0 +1,160 @@
+--- a/src/app/graphe/CpuDetailGraph.class.php
++++ b/src/app/graphe/CpuDetailGraph.class.php
+@@ -127,7 +127,7 @@
+         $this->_month       = $month;
+         $this->_year        = $year;
+         $this->_composante  = $composante;
+-        $this->_salles      = unserialize($salles);
++        $this->_salles      = \Dao::unserializeListe($salles);
+         $this->_largeur     = $largeur;
+         $this->_heureDebut  = $heureDebut;
+         $this->_heureFin    = $heureFin;
+@@ -365,7 +365,7 @@
+                    'AND NOT (HeureFin < :heureDebut OR HeureDebut > :heureFin) '.
+                    'AND NomSalle = "'.$nomSalle.'" ';
+ 
+-            $listeJO = implode(',', unserialize($this->_joursOuvres));
++            $listeJO = implode(',', \Dao::unserializeListe($this->_joursOuvres));
+ 
+             $sql .= 'AND JourSemaine IN ('.$listeJO.') ';
+             $sql .= 'AND NOT (DateFin < ms.Date_DEBUT OR DateDebut > ms.Date_FIN)';
+@@ -397,7 +397,7 @@
+                    'AND NOT (HeureFin < :excluDebut OR HeureDebut > :excluFin) '.
+                    'AND NomSalle = "'.$nomSalle.'" ';
+ 
+-                $listeJO = implode(',', unserialize($this->_joursOuvres));
++                $listeJO = implode(',', \Dao::unserializeListe($this->_joursOuvres));
+ 
+                 $sql .= 'AND JourSemaine IN ('.$listeJO.');';
+ 
+--- a/src/app/graphe/CpuGraph.class.php
++++ b/src/app/graphe/CpuGraph.class.php
+@@ -125,7 +125,7 @@
+         $this->_month       = $month;
+         $this->_year        = $year;
+         $this->_composante  = $composante;
+-        $this->_salles      = unserialize($salles);
++        $this->_salles      = \Dao::unserializeListe($salles);
+         $this->_largeur     = $largeur;
+         $this->_heureDebut  = $heureDebut;
+         $this->_heureFin    = $heureFin;
+@@ -331,7 +331,7 @@
+                    'WHERE DateDebut LIKE "'.$date->format('Y-m').'%" '.
+                    'AND NOT (HeureFin < :heureDebut OR HeureDebut > :heureFin) ';
+ 
+-            $listeJO = implode(',', unserialize($this->_joursOuvres));
++            $listeJO = implode(',', \Dao::unserializeListe($this->_joursOuvres));
+ 
+             $sql .= 'AND JourSemaine IN ('.$listeJO.') ';
+             $sql .= 'AND NOT (DateFin < ms.Date_DEBUT OR DateDebut > ms.Date_FIN) ';
+@@ -378,7 +378,7 @@
+                        'WHERE DateDebut LIKE "'.$date->format('Y-m').'%" '.
+                        'AND NOT (HeureFin < :excluDebut OR HeureDebut > :excluFin) ';
+ 
+-                $listeJO = implode(',', unserialize($this->_joursOuvres));
++                $listeJO = implode(',', \Dao::unserializeListe($this->_joursOuvres));
+ 
+                 $sql .= 'AND JourSemaine IN ('.$listeJO.') ';
+                 $sql .= 'AND NOT (DateFin < ms.Date_DEBUT OR DateDebut > ms.Date_FIN) ';
+@@ -416,7 +416,7 @@
+             $dataArray['data'][]       = $result;
+             $nbMachinesParMois[]  = $this->getNbMachine($date);
+             $dataArray['label'][]      = sprintf("        %s \n[%s terminaux]",$Montharray[$date->format('m')],round($nbMachinesParMois[$i],2));
+-            $dataArray['complement'][] = $nbMachinesParMois[$i] *  NB_JOURS_SEMAINE_MOYEN_PAR_MOIS * count(unserialize($this->_joursOuvres)) * $nb_heures_par_jour - $result;
++            $dataArray['complement'][] = $nbMachinesParMois[$i] *  NB_JOURS_SEMAINE_MOYEN_PAR_MOIS * count(\Dao::unserializeListe($this->_joursOuvres)) * $nb_heures_par_jour - $result;
+ 
+ 
+             //incrémentation du mois (ajout d'un intervalle de 1 mois)
+--- a/src/app/graphe/HumainGraph.class.php
++++ b/src/app/graphe/HumainGraph.class.php
+@@ -117,7 +117,7 @@
+         $this->_date       = $date;
+         $this->_composante = $composante;
+         $this->_pas        = $pas;
+-        $this->_salles     = unserialize($salles);
++        $this->_salles     = \Dao::unserializeListe($salles);
+         $this->_largeur    = $largeur;
+         $this->_heureDebut = $heureDebut;
+         $this->_heureFin   = $heureFin;
+--- a/src/app/graphe/index.php
++++ b/src/app/graphe/index.php
+@@ -285,7 +285,7 @@
+ 		{
+ 			$image .= '<img src="app/graphe/graph.php?menu='.$menu.'&amp;mois='.urlencode($mois).'&amp;composante='.urlencode($composante).'&amp;salles='.urlencode($salles).'&amp;annee='.urlencode($year).'&amp;largeur='.urlencode($largeur).'&amp;heuredebut='.urlencode($heureDebut).'&amp;heurefin='.urlencode($heureFin).'&amp;joursouvres='.urlencode($joursOuvresArray).'&amp;excludebut='.urlencode($excluDebut).'&amp;exclufin='.urlencode($excluFin).'&amp;type=cpu" alt="'.$menu.'" />';
+ 			//on affiche ces 2 graphes si on choisi une composante ou + d'une salle
+-			if ($composante !== '' || count(unserialize($salles)) > 1 )
++			if ($composante !== '' || count(\Dao::unserializeListe($salles)) > 1 )
+ 			{
+ 				$image .= '<img src="app/graphe/graph.php?menu='.$menu.'&amp;mois='.urlencode($mois).'&amp;composante='.urlencode($composante).'&amp;salles='.urlencode($salles).'&amp;annee='.urlencode($year).'&amp;largeur='.urlencode($largeur).'&amp;heuredebut='.urlencode($heureDebut).'&amp;heurefin='.urlencode($heureFin).'&amp;joursouvres='.urlencode($joursOuvresArray).'&amp;excludebut='.urlencode($excluDebut).'&amp;exclufin='.urlencode($excluFin).'&amp;type=cpudetail" alt="cpudetail" />';
+ 
+--- a/src/app/graphe/MaxComposanteGraph.class.php
++++ b/src/app/graphe/MaxComposanteGraph.class.php
+@@ -122,7 +122,7 @@
+         $this->_month       = $month;
+         $this->_year        = $year;
+         $this->_composante  = $composante;
+-        $this->_salles      = unserialize($salles);
++        $this->_salles      = \Dao::unserializeListe($salles);
+         $this->_largeur     = $largeur;
+         $this->_heureDebut  = $heureDebut;
+         $this->_heureFin    = $heureFin;
+@@ -255,7 +255,7 @@
+                    'AND NOT (HeureFin < :heureDebut OR HeureDebut > :heureFin) '.
+                    'AND NomSalle = "'.$nomSalle.'" ';
+ 
+-            $listeJO = implode(',', unserialize($this->_joursOuvres));
++            $listeJO = implode(',', \Dao::unserializeListe($this->_joursOuvres));
+ 
+             $sql .= 'AND JourSemaine IN ('.$listeJO.') ';
+             $sql .= 'AND NOT (DateFin < ms.Date_DEBUT OR DateDebut > ms.Date_FIN)';
+@@ -286,7 +286,7 @@
+                    'AND NOT (HeureFin < :excluDebut OR HeureDebut > :excluFin) '.
+                    'AND NomSalle = "'.$nomSalle.'" ';
+ 
+-                $listeJO = implode(',', unserialize($this->_joursOuvres));
++                $listeJO = implode(',', \Dao::unserializeListe($this->_joursOuvres));
+ 
+                 $sql .= 'AND JourSemaine IN ('.$listeJO.');';
+ 
+@@ -307,7 +307,7 @@
+             }
+ 
+             $dataArray['data'][]       = $result;
+-            $dataArray['complement'][] = $this->getNbMachine($nomSalle,$debut) * NB_SEMAINES_MOYEN_PAR_AN * count(unserialize($this->_joursOuvres)) * $nb_heures_par_jour - $result;
++            $dataArray['complement'][] = $this->getNbMachine($nomSalle,$debut) * NB_SEMAINES_MOYEN_PAR_AN * count(\Dao::unserializeListe($this->_joursOuvres)) * $nb_heures_par_jour - $result;
+         }
+ 
+         return $dataArray;
+--- a/src/app/graphe/MaxGraph.class.php
++++ b/src/app/graphe/MaxGraph.class.php
+@@ -121,7 +121,7 @@
+         $this->_heureDebut   = $heureDebut;
+         $this->_heureFin     = $heureFin;
+         $this->_composante   = $composante;
+-        $this->_salles       = unserialize($salles);
++        $this->_salles       = \Dao::unserializeListe($salles);
+         $this->_largeur      = $largeur;
+         $this->_uniqueConn   = $uniqueConn;
+         $this->_titre        = $this->initTitre();
+--- a/src/app/graphe/OsGraph.class.php
++++ b/src/app/graphe/OsGraph.class.php
+@@ -106,7 +106,7 @@
+     {
+         $this->_date       = $date;
+         $this->_datefin    = $datefin;
+-        $this->_salles     = unserialize($salles);
++        $this->_salles     = \Dao::unserializeListe($salles);
+         $this->_composante = $composante;
+         $this->_titre      = $this->initTitre();
+     }
+--- a/src/app/graphe/SeuilGraph.php
++++ b/src/app/graphe/SeuilGraph.php
+@@ -167,7 +167,7 @@
+ $mc=maxColonnes($date,$datefin,$nombreJoursOuvres,$heureDebut,$heureFin,$pas);
+ $nombreSalles=0;
+ 
+-$salles=unserialize($salles);
++$salles=\Dao::unserializeListe($salles);
+ if ($composante != '') {
+ 	$sqlSalleOuComposante = 'a.Composante="'.$composante.'" ';
+ } else {

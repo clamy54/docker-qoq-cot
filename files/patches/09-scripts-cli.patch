@@ -1,0 +1,84 @@
+--- a/src/setup.php
++++ b/src/setup.php
+@@ -55,6 +55,12 @@
+   /**
+    * Script de récupération des salles à superviser dans l'application
+    */
++// Script a lancer uniquement en ligne de commande
++if (PHP_SAPI !== 'cli') {
++    http_response_code(403);
++    exit;
++}
++
+ require_once 'config.php';
+ require_once 'config_interne.php';
+ 
+--- a/src/export_salles_to_csv.php
++++ b/src/export_salles_to_csv.php
+@@ -55,6 +55,12 @@
+   /**
+    * Script d'export en csv des salles actuellement dans la base
+    */
++// Script a lancer uniquement en ligne de commande
++if (PHP_SAPI !== 'cli') {
++    http_response_code(403);
++    exit;
++}
++
+ require_once 'config.php';
+ require_once 'config_interne.php';
+ 
+--- a/src/bonne_annee.php
++++ b/src/bonne_annee.php
+@@ -51,9 +51,15 @@
+  * QoQ-CoT ; si �a n'�tait pas le cas, �crivez � la Free Software Foundation,
+  *
+  */
++// Script a lancer uniquement en ligne de commande
++if (PHP_SAPI !== 'cli') {
++    http_response_code(403);
++    exit;
++}
++
+ require_once 'config.php';
+ require_once 'config_interne.php';
+-require_once 'utils.php';
++
+ 
+ $dsn = SQL_DSN;
+ $user = SQL_USERNAME;
+--- a/src/utils.php
++++ b/src/utils.php
+@@ -52,31 +52,5 @@
+ * 51 Franklin Street, Fifth Floor Boston, MA 02110-1301 USA
+ * 
+ */
+-function testCondition($objet, $filtre)
+-{
+-    $objet->Message = addslashes($objet->Message);
+ 
+-    $test = eval("\$condition = \"$filtre\";");
+-
+-    $resultat = '';
+-    
+-    $coincoin = eval("\$resultat = $condition?true:false;");
+-
+-    return $resultat;
+-}
+-
+-function evalFilter($objet, $param)
+-{
+-    $test = eval("\$value1 = \"$param\";");
+-
+-    $coincoin = eval("\$value = $value1;");
+-
+-    return $value;
+-}
+-
+-function evalSimple($objet, $param)
+-{
+-    $test = eval("\$value = \"$param\";");
+-
+-    return $value;
+-}
++// Les fonctions d'évaluation de filtres (eval) n'étaient utilisées nulle part et ont été retirées.
