@@ -1,0 +1,290 @@
+diff -ruN avant/ressources/poussin-coq/coq/SOURCES/coq.pl apres/ressources/poussin-coq/coq/SOURCES/coq.pl
+--- avant/ressources/poussin-coq/coq/SOURCES/coq.pl	2026-10-23 12:26:29.435374910 +0200
++++ apres/ressources/poussin-coq/coq/SOURCES/coq.pl	2026-10-23 12:27:07.208891684 +0200
+@@ -164,7 +164,6 @@
+ 	alarm($MAX_SESSION);
+ 	my $insert=0;
+ 	my $dbh;        # connexion MySQL ouverte paresseusement : uniquement si une entrée valide doit être insérée
+-	my $db_ko=0;
+ 	my $echeance_session = time() + $MAX_SESSION;
+ 	while (defined(my $rep = lire_ligne($client, $MAX_LINE, $echeance_session))) {
+ 		if ($rep =~ /FIN/ ) {
+diff -ruN avant/src/app/graphe/DureeGraph.class.php apres/src/app/graphe/DureeGraph.class.php
+--- avant/src/app/graphe/DureeGraph.class.php	2026-10-23 12:26:29.433333361 +0200
++++ apres/src/app/graphe/DureeGraph.class.php	2026-10-23 16:28:41.172828726 +0200
+@@ -156,7 +156,11 @@
+         $i          = $debut;
+         $arrayHeure = array();
+ 
+-        while ($i < $fin) {
++        // Plafond sur le produit largeur×créneaux (pas seulement les créneaux), calé pour rester
++        // sous memory_limit avec une marge. Un plafond absolu couvre aussi les largeurs réduites.
++        $budgetPixels = 3000 * (25 * 150 + 320);
++        $maxCreneaux = min(300, (int) floor($budgetPixels / max($this->largeur, 1) / 25 - 320 / 25));
++        while ($i < $fin && count($arrayHeure) < $maxCreneaux) {
+ 
+             $item = sprintf("%02d:%02d-", $i/60, $i%60);
+ 
+@@ -266,6 +270,11 @@
+ 
+             $heureDebutSalle=$this->hoursToMinutes($this->heureDebut);
+             $heureFinSalle=$this->hoursToMinutes($this->heureFin);
++
++            // getYAxis() borne le nombre de créneaux affichés : au-delà, les
++            // points sont de toute façon ignorés par pSurface. On arrête d'en produire pour
++            // ne pas faire croître $dataArray sans limite avec un pas très fin.
++            $maxCreneaux = count($this->getYAxis());
+ 	    
+             $map='';
+             foreach ($results as $result) {
+@@ -291,6 +300,10 @@
+ 
+                 $next=0;
+                 while(! $next) {
++                     if ($y >= $maxCreneaux) {
++                         $next=1;
++                         break;
++                     }
+                      if ($currCreneau+$this->pas < $heureDebutConnexion) {
+                          if ($map!='') {
+                              $dataArray[]=array($x,$y,$map);
+diff -ruN avant/src/app/graphe/graph.php apres/src/app/graphe/graph.php
+--- avant/src/app/graphe/graph.php	2026-10-23 12:26:29.433391732 +0200
++++ apres/src/app/graphe/graph.php	2026-10-23 16:46:27.608285499 +0200
+@@ -134,6 +134,24 @@
+     }
+ }
+ 
++// Normalise la date de fin pour les types à plage (repli identique au formulaire).
++if ($datefin === '' && in_array($type ?? '', array('cumulduree', 'max', 'os'), true)) {
++    $datefin = date('Y-m-d');
++}
++
++// Borne la plage à 2 ans, sans condition d'ordre (accès direct, pas de contrôle en aval ici).
++if ($datefin !== '' && $date !== '') {
++    try {
++        $ecart = (new \DateTime($date))->diff(new \DateTime($datefin))->days;
++        if ($ecart > 730) {
++            $datefin = (new \DateTime($date))->modify('+730 days')->format('Y-m-d');
++        }
++    } catch (\Exception $e) {
++        // Date syntaxiquement correcte (format AAAA-MM-JJ) mais calendaire invalide
++        // (ex. 2024-99-99) : on laisse le traitement existant en aval la rejeter.
++    }
++}
++
+ 
+ $validMoisArray = array('01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12');
+ 
+@@ -161,7 +179,7 @@
+ 
+ if (isset($_GET['composante'])) {
+ 
+-    $composante = htmlspecialchars($_GET['composante'], ENT_QUOTES);
++    $composante = (string) $_GET['composante'];  // pas d'échappement HTML ici : utilisé en SQL (bindParam/quote) et dans les titres d'image, jamais en sortie HTML directe
+ }
+ 
+ if (isset($_GET['pas'])) {
+diff -ruN avant/src/app/graphe/HumainGraph.class.php apres/src/app/graphe/HumainGraph.class.php
+--- avant/src/app/graphe/HumainGraph.class.php	2026-10-23 12:26:29.423065985 +0200
++++ apres/src/app/graphe/HumainGraph.class.php	2026-10-23 15:19:18.300818837 +0200
+@@ -142,7 +142,12 @@
+         $i          = $debut;
+         $arrayHeure = array();
+ 
+-        while ($i < $fin) {
++        // Contrairement à DureeGraph, l'image de ce graphe a une hauteur fixe (320px, voir
++        // display()) : ce plafond ne protège donc pas un tampon de pixels, mais seulement le
++        // travail SQL par créneau plus bas (une requête par créneau). Très au-dessus de tout
++        // pas/plage légitime proposé par le formulaire.
++        $maxCreneaux = 300;
++        while ($i < $fin && count($arrayHeure) < $maxCreneaux) {
+ 
+             $item = sprintf("%02d:%02d-", $i/60, $i%60);
+ 
+diff -ruN avant/src/app/graphe/index.php apres/src/app/graphe/index.php
+--- avant/src/app/graphe/index.php	2026-10-23 12:26:29.433483045 +0200
++++ apres/src/app/graphe/index.php	2026-10-23 16:28:56.028762068 +0200
+@@ -132,6 +132,25 @@
+ 			        $datefin = $arrayDate[0];
+ 			    else
+ 			        $datefin = '';
++			// Une plage trop longue multiplie les requêtes SQL (une itération par jour côté graphe) :
++			// on la borne à 2 ans, au-delà de tout usage légitime de ce graphe cumulé.
++			if ($datefin !== '' && $date !== '') {
++			    try {
++			        // On ne resserre la borne que si la période est déjà chronologique : sinon la
++			        // plage inversée deviendrait, après calage à +730 jours, acceptable au contrôle
++			        // "$date <= $datefin" qui suit, alors qu'elle doit être rejetée.
++			        if ($date <= $datefin) {
++			            $ecart = (new \DateTime($date))->diff(new \DateTime($datefin))->days;
++			            if ($ecart > 730) {
++			                $datefin = (new \DateTime($date))->modify('+730 days')->format('Y-m-d');
++			                $datepickerfin = (new \DateTime($datefin))->format('d/m/Y');
++			            }
++			        }
++			    } catch (\Exception $e) {
++			        // Date syntaxiquement correcte mais calendaire invalide (ex. 2024-99-99) :
++			        // on laisse le traitement existant en aval la rejeter.
++			    }
++			}
+ 
+ 			$salle            = intval($_GET['salle']);
+ 			$pas              = intval($_GET['pas']);
+@@ -252,7 +271,7 @@
+                 $year = $_GET['annee'];
+                 $largeur = intval($_GET['largeur']);
+ 
+-                $composante       = htmlspecialchars($_GET['composante'], ENT_QUOTES);
++                $composante       = (string) ($_GET['composante'] ?? '');  // pas d'échappement HTML ici : utilisé en SQL (bindParam/quote) et dans les titres d'image, jamais en sortie HTML directe
+                 $heureDebut       = htmlspecialchars($_GET['heuredebut'], ENT_QUOTES);
+                 $heureFin         = htmlspecialchars($_GET['heurefin'], ENT_QUOTES);
+                 $joursOuvresArray = serialize($_GET['joursouvres']);
+@@ -335,6 +354,24 @@
+ 					$datefin = $arrayDate[0];
+ 				else
+ 					$datefin = '';
++				// Même borne de 2 ans que les autres graphes à itération journalière.
++				if ($datefin !== '' && $date !== '') {
++					try {
++						// On ne resserre la borne que si la période est déjà chronologique : sinon la
++						// plage inversée deviendrait, après calage à +730 jours, acceptable au contrôle
++						// "$date <= $datefin" qui suit, alors qu'elle doit être rejetée.
++						if ($date <= $datefin) {
++							$ecart = (new \DateTime($date))->diff(new \DateTime($datefin))->days;
++							if ($ecart > 730) {
++								$datefin = (new \DateTime($date))->modify('+730 days')->format('Y-m-d');
++								$datepickerfin = (new \DateTime($datefin))->format('d/m/Y');
++							}
++						}
++					} catch (\Exception $e) {
++						// Date syntaxiquement correcte mais calendaire invalide (ex. 2024-99-99) :
++						// on laisse le traitement existant en aval la rejeter.
++					}
++				}
+ 
+ 
+ 			$pas        = intval($_GET['pas']);
+@@ -345,7 +382,7 @@
+ 			$heureFin   = preg_match('#^\d{2}:\d{2}$#', (string)($_GET['heurefin'] ?? '')) ? $_GET['heurefin'] : HEURE_FIN;
+ 
+ 
+-			$composante = htmlspecialchars($_GET['composante'], ENT_QUOTES);
++			$composante = (string) ($_GET['composante'] ?? '');  // pas d'échappement HTML ici : utilisé en SQL (bindParam/quote) et dans les titres d'image, jamais en sortie HTML directe
+ 
+ 			if ($salles == '' && $composante == '')
+ 			{
+@@ -446,6 +483,22 @@
+                         $datefin = $arrayDate[0];
+                     else
+                         $datefin = '';
++                // Même borne de 2 ans que les autres graphes à itération journalière. Ce
++                // graphe n'a pas de contrôle d'ordre des dates en aval (contrairement à
++                // Durée cumulée/Humain-Max/Seuil) : on borne sans condition d'ordre, pour
++                // ne pas laisser une plage inversée échapper au plafond.
++                if ($datefin !== '' && $date !== '') {
++                    try {
++                        $ecart = (new \DateTime($date))->diff(new \DateTime($datefin))->days;
++                        if ($ecart > 730) {
++                            $datefin = (new \DateTime($date))->modify('+730 days')->format('Y-m-d');
++                            $datepickerfin = (new \DateTime($datefin))->format('d/m/Y');
++                        }
++                    } catch (\Exception $e) {
++                        // Date syntaxiquement correcte mais calendaire invalide (ex. 2024-99-99) :
++                        // on laisse le traitement existant en aval la rejeter.
++                    }
++                }
+ 
+                 if (isset($_GET['salles'])) {
+                     $salles = serialize($_GET['salles']);
+@@ -455,7 +508,7 @@
+                     $salles = '';
+                 }
+ 
+-                $composante = htmlspecialchars($_GET['composante'], ENT_QUOTES);
++                $composante = (string) ($_GET['composante'] ?? '');  // pas d'échappement HTML ici : utilisé en SQL (bindParam/quote) et dans les titres d'image, jamais en sortie HTML directe
+ 
+                 $image .= '<img src="app/graphe/graph.php?menu='.$menu.'&amp;date='.urlencode($date).'&amp;datefin='.urlencode($datefin).'&amp;salles='.urlencode($salles).'&amp;composante='.urlencode($composante).'&amp;type=os" alt="'.$menu.'" id="osimg" />';
+             }
+@@ -497,6 +550,25 @@
+ 		    if (preg_match('#(\d{4})-(\d{2})-(\d{2})#', $_GET['datefin'], $arrayDate))
+ 		        $datefin = $arrayDate[0];
+ 
++		// Même borne de 2 ans que les autres graphes : le Seuil itère aussi jour par jour.
++		if ($datefin !== '' && $date !== '') {
++		    try {
++		        // On ne resserre la borne que si la période est déjà chronologique : sinon la
++		        // plage inversée deviendrait, après calage à +730 jours, acceptable au contrôle
++		        // "$date > $datefin" qui suit, alors qu'elle doit être rejetée.
++		        if ($date <= $datefin) {
++		            $ecart = (new \DateTime($date))->diff(new \DateTime($datefin))->days;
++		            if ($ecart > 730) {
++		                $datefin = (new \DateTime($date))->modify('+730 days')->format('Y-m-d');
++		                $datepickerfin = (new \DateTime($datefin))->format('d/m/Y');
++		            }
++		        }
++		    } catch (\Exception $e) {
++		        // Date syntaxiquement correcte mais calendaire invalide (ex. 2024-99-99) :
++		        // on laisse le traitement existant en aval la rejeter.
++		    }
++		}
++
+                 if (preg_match('#\d*#', $_GET['valeurSeuil'], $arrayValeurSeuil))
+                    $valeurSeuil=$arrayValeurSeuil[0];
+ 
+@@ -505,14 +577,19 @@
+                 else
+                     $salles = '';
+ 
+-                $composante       = htmlspecialchars($_GET['composante'], ENT_QUOTES);
++                $composante       = (string) ($_GET['composante'] ?? '');  // pas d'échappement HTML ici : utilisé en SQL (bindParam/quote) et dans les titres d'image, jamais en sortie HTML directe
+                 // Heures au format hh:mm, pas en minutes et jours ouvrés de 0 à 6 : ils servent aux calculs des créneaux
+                 $heureDebut       = preg_match('#^\d{2}:\d{2}$#', (string) ($_GET['heuredebut'] ?? '')) ? $_GET['heuredebut'] : '';
+                 $heureFin         = preg_match('#^\d{2}:\d{2}$#', (string) ($_GET['heurefin'] ?? '')) ? $_GET['heurefin'] : '';
+-                $pas              = intval($_GET['pas'] ?? 0) > 0 ? intval($_GET['pas']) : 60;
++                $pas              = intval($_GET['pas'] ?? 0) > 0 && intval($_GET['pas']) <= 1440 ? intval($_GET['pas']) : 60;
++                // Dédupliqué et trié : SeuilGraph.php calcule l'écart entre jours ouvrés consécutifs
++                // pour avancer de jour en jour ; une valeur répétée donne un écart nul et fait
++                // retraiter le même jour autant de fois qu'il y a de répétitions, ce qui multiplie
++                // le nombre de requêtes SQL bien au-delà du budget calculé plus bas.
+                 $arrayJoursOuvres = isset($_GET['joursouvres']) && is_array($_GET['joursouvres'])
+-                    ? array_values(array_filter(array_map('intval', $_GET['joursouvres']), function ($j) { return $j >= 0 && $j <= 6; }))
++                    ? array_values(array_unique(array_filter(array_map('intval', $_GET['joursouvres']), function ($j) { return $j >= 0 && $j <= 6; })))
+                     : array();
++                sort($arrayJoursOuvres);
+                 if (empty($arrayJoursOuvres))
+                     $arrayJoursOuvres = '';
+                 $critereSeuil     = array_key_exists((string) ($_GET['critereSeuil'] ?? ''), $arrayCriteresSeuil) ? $_GET['critereSeuil'] : '';
+@@ -549,6 +626,32 @@
+ 		{
+ 			$content .= '<span class="erreur">Veuillez saisir une valeur seuil valide</span>';
+ 		}
++		else if (
++			// Plafond sur le volume total de travail (plage x fenêtre x pas), largement au-dessus
++			// de tout usage légitime, compté sur les seuls jours ouvrés sélectionnés (jamais vide
++			// à ce stade) pour ne pas rejeter à tort une plage longue mais peu coûteuse.
++			(function () use ($date, $datefin, $heureDebut, $heureFin, $pas, $arrayJoursOuvres) {
++				try {
++					$ecartJours = (new \DateTime($date))->diff(new \DateTime($datefin))->days + 1;
++				} catch (\Exception $e) {
++					// Date syntaxiquement correcte mais calendaire invalide (ex. 2024-99-99) : on
++					// refuse plutôt que de laisser passer une valeur non vérifiée vers SeuilGraph.php.
++					return true;
++				}
++				$joursVisites = (int) ceil($ecartJours / 7) * max(count($arrayJoursOuvres), 1);
++				list($hD, $mD) = explode(':', $heureDebut);
++				list($hF, $mF) = explode(':', $heureFin);
++				$minutesFenetre = ($hF * 60 + $mF) - ($hD * 60 + $mD);
++				// La vraie boucle (SeuilGraph.php) avance tant que le créneau courant commence
++				// avant l'heure de fin, donc traite un dernier créneau partiel : arrondi supérieur,
++				// pour ne jamais sous-estimer le nombre réel de requêtes SQL exécutées.
++				$creneauxParJour = $pas > 0 ? (int) ceil(max($minutesFenetre, 0) / $pas) : 0;
++				return ($joursVisites * $creneauxParJour) > 10000;
++			})()
++		)
++		{
++			$content .= '<span class="erreur">La combinaison de la plage de dates, de la fenêtre horaire et du pas dépasse la limite autorisée : réduisez la plage de dates, élargissez le pas, ou réduisez la fenêtre horaire.</span>';
++		}
+ 		else {
+ 			require_once 'SeuilGraph.php';
+                 }
