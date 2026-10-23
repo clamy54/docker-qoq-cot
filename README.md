@@ -14,7 +14,7 @@ QoQ-Cot was written for PHP 7. The patches under `files/patches/` are applied at
 
 ## Security
 
-The additional patches under `files/patches/` harden the web application and the server configuration. Users of previous versions of this image should upgrade.
+The additional patches under `files/patches/` harden the web application, the Coq server and the server configuration. Users of previous versions of this image should upgrade. The Coq hardening is transparent to the already-deployed poussins (the network protocol is unchanged).
 
 `setup.php`, `export_salles_to_csv.php` and `bonne_annee.php` can no longer be opened from a browser. Run them with `docker container exec`, for example :
 ```shell
