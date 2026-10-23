@@ -1,0 +1,395 @@
+diff -ruN avant/src/app/admin/delete.php apres/src/app/admin/delete.php
+--- avant/src/app/admin/delete.php	2026-10-23 16:12:48.872221018 +0200
++++ apres/src/app/admin/delete.php	2026-10-23 16:47:03.162349579 +0200
+@@ -56,17 +56,24 @@
+ 
+ $login = (isset($_POST['login']) && is_string($_POST['login'])) ? $_POST['login'] : '';
+ 
+-# On refuse de supprimer son propre compte et de retirer le dernier administrateur,
+-# ce qui rendrait l'interface d'administration définitivement inaccessible.
+-$nbAdmins = (int) $pdo->query('SELECT COUNT(*) FROM Admins')->fetchColumn();
+-
+-if ($login !== '' && $login !== $_SESSION['CURRENT_USER'] && $nbAdmins > 1) {
+-    # Correspondance binaire exacte, cohérente avec la vérification ci-dessus et avec checkRoles.php.
+-    $sql = 'DELETE FROM Admins WHERE login = BINARY :login';
+-
+-    $query = $pdo->prepare($sql);
+-    $query->bindValue(':login', $login, PDO::PARAM_STR);
+-    $query->execute();
++# On refuse de supprimer son propre compte et de retirer le dernier administrateur. Compte et
++# suppression sont faits dans la même transaction, avec un verrou sur la lecture, pour rester
++# correct si deux suppressions sont soumises en même temps.
++if ($login !== '' && $login !== $_SESSION['CURRENT_USER']) {
++    $pdo->beginTransaction();
++
++    $nbAdmins = (int) $pdo->query('SELECT COUNT(*) FROM Admins FOR UPDATE')->fetchColumn();
++
++    if ($nbAdmins > 1) {
++        # Correspondance binaire exacte, cohérente avec la vérification ci-dessus et avec checkRoles.php.
++        $sql = 'DELETE FROM Admins WHERE login = BINARY :login';
++
++        $query = $pdo->prepare($sql);
++        $query->bindValue(':login', $login, PDO::PARAM_STR);
++        $query->execute();
++    }
++
++    $pdo->commit();
+ }
+ 
+ $sqlAllAdmin = 'SELECT login FROM Admins ORDER BY login ASC';
+diff -ruN avant/src/app/graphe/DureeGraph.class.php apres/src/app/graphe/DureeGraph.class.php
+--- avant/src/app/graphe/DureeGraph.class.php	2026-10-23 16:12:48.872589421 +0200
++++ apres/src/app/graphe/DureeGraph.class.php	2026-10-23 16:26:30.669398438 +0200
+@@ -304,9 +304,8 @@
+                 $heureDebutConnexion=$this->hoursToMinutes($result->HeureDebut);
+                 $heureFinConnexion=$this->hoursToMinutes($result->HeureFin);
+ 
+-                # Les champs (login, OS, heures) viennent de la base et finissent dans l'attribut
+-                # title de la carte, que l'infobulle réaffiche en HTML : on les échappe ici, en
+-                # conservant le <br /> de mise en forme ajouté par le code.
++                # Champs venant de la base, affichés en infobulle (voir tooltip.js) : on les
++                # échappe pour que l'attribut title de la carte reste valide.
+                 $ligneInfo = htmlspecialchars($result->Login, ENT_QUOTES).' ('.htmlspecialchars($result->NomOs, ENT_QUOTES).') de '.htmlspecialchars($result->HeureDebut, ENT_QUOTES).' à '.htmlspecialchars($result->HeureFin, ENT_QUOTES).'<br />';
+ 
+                 $next=0;
+diff -ruN avant/src/app/graphe/graph.php apres/src/app/graphe/graph.php
+--- avant/src/app/graphe/graph.php	2026-10-23 16:12:48.872501255 +0200
++++ apres/src/app/graphe/graph.php	2026-10-23 16:26:51.253310629 +0200
+@@ -216,30 +216,29 @@
+     }
+ }
+ 
+-// Les heures servent à des calculs (strtotime, conversion en minutes) : on n'accepte
+-// que le format hh:mm, avec repli sur la fenêtre d'observation par défaut.
+-if (isset($_GET['heuredebut']) && preg_match('#^\d{2}:\d{2}$#', (string)$_GET['heuredebut'])) {
++// Horaire hh:mm réellement calendaire, avec repli sur la fenêtre par défaut.
++if (isset($_GET['heuredebut']) && \Dao::heureValide((string) $_GET['heuredebut'])) {
+ 
+     $heureDebut = $_GET['heuredebut'];
+ } else {
+     $heureDebut = HEURE_DEBUT;
+ }
+ 
+-if (isset($_GET['heurefin']) && preg_match('#^\d{2}:\d{2}$#', (string)$_GET['heurefin'])) {
++if (isset($_GET['heurefin']) && \Dao::heureValide((string) $_GET['heurefin'])) {
+ 
+     $heureFin = $_GET['heurefin'];
+ } else {
+     $heureFin = HEURE_FIN;
+ }
+ 
+-if (isset($_GET['excludebut'])) {
++if (isset($_GET['excludebut']) && \Dao::heureValide((string) $_GET['excludebut'])) {
+ 
+-    $excluDebut = htmlspecialchars($_GET['excludebut'], ENT_QUOTES);
++    $excluDebut = $_GET['excludebut'];
+ }
+ 
+-if (isset($_GET['exclufin'])) {
++if (isset($_GET['exclufin']) && \Dao::heureValide((string) $_GET['exclufin'])) {
+ 
+-    $excluFin = htmlspecialchars($_GET['exclufin'], ENT_QUOTES);
++    $excluFin = $_GET['exclufin'];
+ }
+ 
+ if (isset($_GET['joursouvres'])) {
+@@ -249,6 +248,14 @@
+ 
+ $graph = '';
+ 
++// Même contrôle que le formulaire d'index.php, repris ici pour l'accès direct à graph.php.
++if (in_array($type, array('cpu', 'cpudetail', 'maxcomposante', 'humain', 'max'), true)
++    && ($composante === null || $composante === '')
++    && empty(\Dao::unserializeListe($salles))
++) {
++    echo 'Il faut choisir une composante ou au moins une salle';
++    exit;
++}
+ 
+ switch ($type) {
+ 
+diff -ruN avant/src/app/graphe/index.php apres/src/app/graphe/index.php
+--- avant/src/app/graphe/index.php	2026-10-23 16:12:48.872540660 +0200
++++ apres/src/app/graphe/index.php	2026-10-23 16:34:57.602576931 +0200
+@@ -157,8 +157,8 @@
+ 			if ($pas < 1 || $pas > 1440) { $pas = 60; }
+ 			$largeur          = intval($_GET['largeur']);
+ 			if ($largeur < 300 || $largeur > 3000) { $largeur = 900; }
+-			$heureDebut       = preg_match('#^\d{2}:\d{2}$#', (string)($_GET['heuredebut'] ?? '')) ? $_GET['heuredebut'] : HEURE_DEBUT;
+-			$heureFin         = preg_match('#^\d{2}:\d{2}$#', (string)($_GET['heurefin'] ?? '')) ? $_GET['heurefin'] : HEURE_FIN;
++			$heureDebut       = \Dao::heureValide((string) ($_GET['heuredebut'] ?? '')) ? $_GET['heuredebut'] : HEURE_DEBUT;
++			$heureFin         = \Dao::heureValide((string) ($_GET['heurefin'] ?? '')) ? $_GET['heurefin'] : HEURE_FIN;
+ 			$joursOuvresArray = serialize($_GET['joursouvres']);
+ 
+ 			if ($datefin === '')
+@@ -272,13 +272,13 @@
+                 $largeur = intval($_GET['largeur']);
+ 
+                 $composante       = (string) ($_GET['composante'] ?? '');  // pas d'échappement HTML ici : utilisé en SQL (bindParam/quote) et dans les titres d'image, jamais en sortie HTML directe
+-                $heureDebut       = htmlspecialchars($_GET['heuredebut'], ENT_QUOTES);
+-                $heureFin         = htmlspecialchars($_GET['heurefin'], ENT_QUOTES);
++                $heureDebut       = \Dao::heureValide((string) ($_GET['heuredebut'] ?? '')) ? $_GET['heuredebut'] : '';
++                $heureFin         = \Dao::heureValide((string) ($_GET['heurefin'] ?? '')) ? $_GET['heurefin'] : '';
+                 $joursOuvresArray = serialize($_GET['joursouvres']);
+-                $excluDebut       = htmlspecialchars($_GET['excludebut'], ENT_QUOTES);
+-                $excluFin         = htmlspecialchars($_GET['exclufin'], ENT_QUOTES);
++                $excluDebut       = \Dao::heureValide((string) ($_GET['excludebut'] ?? '')) ? $_GET['excludebut'] : '';
++                $excluFin         = \Dao::heureValide((string) ($_GET['exclufin'] ?? '')) ? $_GET['exclufin'] : '';
+ 
+-		if ($salles == '' && $composante == '')
++		if (empty(\Dao::unserializeListe($salles)) && $composante == '')
+ 		{
+ 			$content .= '<span class="erreur"> Veuillez choisir une salle ou un groupe de salles</span>';
+ 		}
+@@ -378,13 +378,13 @@
+ 			if ($pas < 1 || $pas > 1440) { $pas = 60; }
+ 			$largeur    = intval($_GET['largeur']);
+ 			if ($largeur < 300 || $largeur > 3000) { $largeur = 900; }
+-			$heureDebut = preg_match('#^\d{2}:\d{2}$#', (string)($_GET['heuredebut'] ?? '')) ? $_GET['heuredebut'] : HEURE_DEBUT;
+-			$heureFin   = preg_match('#^\d{2}:\d{2}$#', (string)($_GET['heurefin'] ?? '')) ? $_GET['heurefin'] : HEURE_FIN;
++			$heureDebut = \Dao::heureValide((string) ($_GET['heuredebut'] ?? '')) ? $_GET['heuredebut'] : HEURE_DEBUT;
++			$heureFin   = \Dao::heureValide((string) ($_GET['heurefin'] ?? '')) ? $_GET['heurefin'] : HEURE_FIN;
+ 
+ 
+ 			$composante = (string) ($_GET['composante'] ?? '');  // pas d'échappement HTML ici : utilisé en SQL (bindParam/quote) et dans les titres d'image, jamais en sortie HTML directe
+ 
+-			if ($salles == '' && $composante == '')
++			if (empty(\Dao::unserializeListe($salles)) && $composante == '')
+ 			{
+ 			    $content .= '<span class="erreur">Veuillez choisir une salle ou un groupe de salles</span>';
+ 			}
+@@ -579,8 +579,8 @@
+ 
+                 $composante       = (string) ($_GET['composante'] ?? '');  // pas d'échappement HTML ici : utilisé en SQL (bindParam/quote) et dans les titres d'image, jamais en sortie HTML directe
+                 // Heures au format hh:mm, pas en minutes et jours ouvrés de 0 à 6 : ils servent aux calculs des créneaux
+-                $heureDebut       = preg_match('#^\d{2}:\d{2}$#', (string) ($_GET['heuredebut'] ?? '')) ? $_GET['heuredebut'] : '';
+-                $heureFin         = preg_match('#^\d{2}:\d{2}$#', (string) ($_GET['heurefin'] ?? '')) ? $_GET['heurefin'] : '';
++                $heureDebut       = \Dao::heureValide((string) ($_GET['heuredebut'] ?? '')) ? $_GET['heuredebut'] : '';
++                $heureFin         = \Dao::heureValide((string) ($_GET['heurefin'] ?? '')) ? $_GET['heurefin'] : '';
+                 $pas              = intval($_GET['pas'] ?? 0) > 0 && intval($_GET['pas']) <= 1440 ? intval($_GET['pas']) : 60;
+                 // Dédupliqué et trié : SeuilGraph.php calcule l'écart entre jours ouvrés consécutifs
+                 // pour avancer de jour en jour ; une valeur répétée donne un écart nul et fait
+@@ -602,7 +602,7 @@
+ 		{
+ 			$content .= '<span class="erreur">La date de début de la fenêtre d\'observation doit être antérieure à la date de fin '.$datefin.'</span>';
+ 		}
+-		else if ($salles == '' && $composante == '')
++		else if (empty(\Dao::unserializeListe($salles)) && $composante == '')
+ 		{
+ 			$content .= '<span class="erreur">Veuillez choisir une salle ou un groupe de salles</span>';
+ 		}
+diff -ruN avant/src/app/graphe/OsGraph.class.php apres/src/app/graphe/OsGraph.class.php
+--- avant/src/app/graphe/OsGraph.class.php	2026-10-23 16:12:48.872413990 +0200
++++ apres/src/app/graphe/OsGraph.class.php	2026-10-23 16:25:24.290675660 +0200
+@@ -122,23 +122,29 @@
+     {
+         $pdo = \Dao::getInstance();
+ 
+-        $clauseIn = implode(",", $this->_salles);
++        $results = array();
+ 
+-        $sql = 'SELECT NomSalle FROM Salles '.
+-               'WHERE IdSalle IN ('.$clauseIn.');';
+-        
++        // Ne filtre que si une sélection de salles est présente (lue plus bas).
++        if (!empty($this->_salles)) {
+ 
+-        $query = $pdo->prepare($sql);
++            $clauseIn = implode(",", $this->_salles);
++
++            $sql = 'SELECT NomSalle FROM Salles '.
++                   'WHERE IdSalle IN ('.$clauseIn.');';
++
++
++            $query = $pdo->prepare($sql);
+ 
+-        $query->execute();
++            $query->execute();
+ 
+-        $results = $query->fetchAll();
++            $results = $query->fetchAll();
++        }
+ 
+         if ($this->_composante != '') {
+ 
+             $titre = 'Répartition des connexions pour le groupe de salles '.$this->_composante.' du '.date('d/m/Y', strtotime($this->_date)).' au '.date('d/m/Y', strtotime($this->_datefin));
+ 
+-        } else if (is_array($this->_salles) && $this->_salles[0] != '') {
++        } else if (!empty($this->_salles)) {
+ 
+             $count = $query->rowCount();
+ 
+@@ -205,22 +211,26 @@
+ 
+         $sql = 'SELECT COUNT(*) as c, NomOs FROM '.$tableConnexions.' AS c ';
+ 
+-        if ((is_array($this->_salles) && $this->_salles[0] != '') || $this->_composante != '') {
++        $filtreSalle = (!empty($this->_salles)) || $this->_composante != '';
++
++        if ($filtreSalle) {
+ 
+             $sql .= 'INNER JOIN MachinesToSalles AS ms '.
+                     'ON c.NomMachine = ms.NomMachine '.
+                     'INNER JOIN Salles AS s ON ms.RefSalle = s.IdSalle ';
+-                    
++
+              }
+ 
+         $sql .= 'WHERE NOT (DateFin < :dateDebut OR Datedebut > :dateFin) ';
+-        $sql .= 'AND NOT (DateFin < ms.Date_DEBUT OR DateDebut > ms.Date_FIN) ';
++        if ($filtreSalle) {
++            $sql .= 'AND NOT (DateFin < ms.Date_DEBUT OR DateDebut > ms.Date_FIN) ';
++        }
+ 
+         if ($this->_composante != '') {
+ 
+             $sql .= 'AND s.Composante = :composante ';
+ 
+-        } else if (is_array($this->_salles) && $this->_salles[0] != '') {
++        } else if (!empty($this->_salles)) {
+ 
+             $clauseIn = implode(",", $this->_salles);
+ 
+diff -ruN avant/src/app/graphe/SeuilGraph.php apres/src/app/graphe/SeuilGraph.php
+--- avant/src/app/graphe/SeuilGraph.php	2026-10-23 16:12:48.872480058 +0200
++++ apres/src/app/graphe/SeuilGraph.php	2026-10-23 16:26:16.162459817 +0200
+@@ -99,8 +99,9 @@
+ 	$date1=date_create($date);
+ 	$date2=date_create($datefin);
+ 	$diff=date_diff($date1,$date2);
+-	$maxJours=(($diff->format("%d")/7)+1)*$nombreJoursOuvres;
+-	$maxCreneaux=(heuresVersMinutes($heureFin)-heuresVersMinutes($heureDebut)/$pas)+1;
++	// Calcul corrigé (l'ancien était imprécis).
++	$maxJours=(int) ceil(($diff->days+1)/7)*$nombreJoursOuvres;
++	$maxCreneaux=(int) ceil((heuresVersMinutes($heureFin)-heuresVersMinutes($heureDebut))/$pas);
+ 	return $maxJours*$maxCreneaux;
+ }
+ 
+diff -ruN avant/src/index.php apres/src/index.php
+--- avant/src/index.php	2026-10-23 16:12:48.885015046 +0200
++++ apres/src/index.php	2026-10-23 16:25:49.562571228 +0200
+@@ -83,6 +83,13 @@
+ 	}
+ 	$_SESSION['CURRENT_USER'] = $utilisateurApache;
+ }
++else
++{
++	// Pas d'identité Apache sur cette requête : on invalide la session plutôt que de la laisser
++	// active sans revalidation.
++	$_SESSION = array();
++	session_regenerate_id(true);
++}
+ 
+ if (!isset($_SESSION['CURRENT_USER'])) {
+     header('WWW-Authenticate: Basic realm="My Realm"');
+diff -ruN avant/src/lib/Dao.class.php apres/src/lib/Dao.class.php
+--- avant/src/lib/Dao.class.php	2026-10-23 16:12:48.883600206 +0200
++++ apres/src/lib/Dao.class.php	2026-10-23 16:27:01.196267921 +0200
+@@ -109,16 +109,28 @@
+ 
+     /**
+      * Désérialise une liste transmise dans l'URL (salles, jours ouvrés) sans instancier d'objet
+-     * et en ne gardant que des entiers ou la valeur vide
++     * et en ne gardant que des entiers, dédupliqués
+      */
+     public static function unserializeListe($serialise) {
+         $liste = is_string($serialise) ? unserialize($serialise, array('allowed_classes' => false)) : $serialise;
+         if (!is_array($liste)) {
+             return array();
+         }
+-        return array_map(function ($valeur) {
+-            return is_numeric($valeur) ? (string) intval($valeur) : '';
+-        }, $liste);
++        // Valeurs invalides retirées (pas blanchies), doublons supprimés.
++        $valeurs = array();
++        foreach ($liste as $valeur) {
++            if (is_numeric($valeur)) {
++                $valeurs[(string) intval($valeur)] = true;
++            }
++        }
++        return array_keys($valeurs);
++    }
++
++    /**
++     * Valide un horaire au format hh:mm avec des bornes calendaires réelles
++     */
++    public static function heureValide($valeur) {
++        return is_string($valeur) && preg_match('/\A(?:[01][0-9]|2[0-3]):[0-5][0-9]\z/', $valeur) === 1;
+     }
+ 
+ }
+diff -ruN avant/src/logout.php apres/src/logout.php
+--- avant/src/logout.php	2026-10-23 16:12:48.885028551 +0200
++++ apres/src/logout.php	2026-10-23 16:47:16.603370496 +0200
+@@ -57,4 +57,10 @@
+ unset($_SESSION);
+ $relative_path_app=dirname($_SERVER['REQUEST_URI']);
+ $protocol=(isset($_SERVER['HTTPS']) && $_SERVER['HTTPS']=="on")?"https":"http";
+-header('Location:'.$protocol.'://logout@'.$_SERVER['HTTP_HOST'].$relative_path_app.'/reallogout.php');
++// On ne réinjecte Host dans l'URL que s'il a une forme valide (nom d'hôte, ou IPv6 entre
++// crochets) ; sinon repli relatif.
++if (preg_match('/\A(?:[a-zA-Z0-9.-]+|\[[0-9a-fA-F:]+\])(:\d{1,5})?\z/', (string) ($_SERVER['HTTP_HOST'] ?? '')) === 1) {
++    header('Location:'.$protocol.'://logout@'.$_SERVER['HTTP_HOST'].$relative_path_app.'/reallogout.php');
++} else {
++    header('Location: reallogout.php');
++}
+diff -ruN avant/src/utils.php apres/src/utils.php
+--- avant/src/utils.php	2026-10-23 16:12:48.884990153 +0200
++++ apres/src/utils.php	1970-01-01 01:00:00.000000000 +0100
+@@ -1,56 +0,0 @@
+-<?php
+-/**
+-*
+-* ********************************* ENGLISH *********************************
+-* 
+-* --- Copyright notice :
+-* 
+-* Copyright 2013-2021 DOSI AMU & al. (Frédéric Bloise, Hugo Di Giovanni, Frédéric Giudicelli, Gérard Milhaud, Arnaud Salvucci)
+-* 
+-* 
+-* --- Statement of copying permission
+-* 
+-* This file is part of QoQ-CoT.
+-* 
+-* QoQ-CoT is free software; you can redistribute it and/or modify
+-* it under the terms of the GNU General Public License as published by
+-* the Free Software Foundation; either version 3 of the License, or
+-* (at your option) any later version.
+-* 
+-* QoQ-CoT is distributed in the hope that it will be useful,
+-* but WITHOUT ANY WARRANTY; without even the implied warranty of
+-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+-* GNU General Public License for more details.
+-* 
+-* You should have received a copy of the GNU General Public License
+-* along with QoQ-CoT; if not, write to the Free Software
+-* Foundation, 51 Franklin Street, Fifth Floor Boston, MA 02110-1301 USA
+-* 
+-* *********** TRADUCTION FRANÇAISE PERSONNELLE SANS VALEUR LÉGALE ***********
+-*
+-* --- Notice de Copyright :
+-* 
+-* Copyright 2013-2021 DOSI AMU & al. (Frédéric Bloise, Hugo Di Giovanni, Frédéric Giudicelli, Gérard Milhaud, Arnaud Salvucci)
+-* 
+-* 
+-* --- Déclaration de permission de copie
+-* 
+-* Ce fichier fait partie de QoQ-CoT.
+-* 
+-* QoQ-CoT est un logiciel libre : vous pouvez le redistribuer ou le modifier
+-* selon les termes de la Licence Publique Générale GNU telle qu'elle est
+-* publiée par la Free Software Foundation ; soit la version 3 de la Licence,
+-* soit (à votre choix) une quelconque version ultérieure.
+-* 
+-* QoQ-CoT est distribué dans l'espoir qu'il soit utile, mais SANS AUCUNE
+-* GARANTIE ; sans même la garantie implicite de COMMERCIALISATION ou 
+-* d'ADAPTATION DANS UN BUT PARTICULIER. Voir la Licence publique Générale GNU
+-* pour plus de détails.
+-* 
+-* Vous devriez avoir reçu une copie de la Licence Publique Générale GNU avec 
+-* QoQ-CoT ; si ça n'était pas le cas, écrivez à la Free Software Foundation,
+-* 51 Franklin Street, Fifth Floor Boston, MA 02110-1301 USA
+-* 
+-*/
+-
+-// Les fonctions d'évaluation de filtres (eval) n'étaient utilisées nulle part et ont été retirées.
