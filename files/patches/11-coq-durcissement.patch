@@ -1,6 +1,6 @@
 --- a/ressources/poussin-coq/coq/SOURCES/coq.pl
 +++ b/ressources/poussin-coq/coq/SOURCES/coq.pl
-@@ -59,10 +59,33 @@
+@@ -59,10 +59,37 @@
  use YAML::Tiny;
  use Data::Dumper;
  use MIME::Base64;
@@ -14,20 +14,24 @@
 +# --- Paramètres de durcissement réseau (transparents pour un poussin légitime) ---
 +my $MAX_LINE      = 8192;   # taille max d'une ligne : une remontée chiffrée fait quelques dizaines d'octets
 +my $READ_TIMEOUT  = 20;     # secondes d'inactivité avant de couper une connexion (anti-slowloris)
++my $MAX_SESSION   = 60;     # durée totale max d'une connexion : une remontée normale prend <1s
 +my $MAX_ENFANTS   = 80;     # connexions simultanées max ; configurable via coq.yml (server->max_children)
 +my $enfants       = 0;      # nombre d'enfants vivants
 +
 +# Moissonneur : réduit le compteur à la fin de chaque enfant (remplace l'ancien 'IGNORE')
-+$SIG{CHLD} = sub { while ((my $p = waitpid(-1, WNOHANG)) > 0) { $enfants-- if $enfants > 0; } };
++$SIG{CHLD} = sub { local ($!, $?); while ((my $p = waitpid(-1, WNOHANG)) > 0) { $enfants-- if $enfants > 0; } };
 +
-+# Lit une ligne octet par octet, bornée en taille ; renvoie undef sur EOF, timeout ou dépassement
++# Lit une ligne octet par octet, bornée en taille et en durée ; renvoie undef sur EOF,
++# timeout, dépassement de taille ou dépassement de l'échéance absolue $deadline (epoch).
 +sub lire_ligne {
-+	my ($sock, $max) = @_;
++	my ($sock, $max, $deadline) = @_;
 +	my $ligne = '';
 +	my $c;
 +	while (1) {
++		return undef if time() > $deadline;   # échéance de la session dépassée
 +		my $n = sysread($sock, $c, 1);
-+		return undef if !defined $n || $n == 0;
++		return undef if !defined $n;                       # erreur de lecture (hors timeout : cf. SO_RCVTIMEO)
++		if ($n == 0) { return length($ligne) ? $ligne : undef; }   # EOF : on restitue le fragment, comme <$client> à l'origine
 +		$ligne .= $c;
 +		return $ligne if $c eq "\n";
 +		return undef if length($ligne) > $max;
@@ -36,7 +40,7 @@
  
  sub decode  {
  	my ($rep,$k0,$k1,$k2,$k3) = @_;
-@@ -88,7 +111,7 @@
+@@ -88,7 +115,7 @@
  		$r_utf8.=sprintf("%08x%08x",$v0,$v1);
  	}
  	my @bytes = map hex, $r_utf8 =~ /../g;
@@ -45,7 +49,7 @@
  	my $b_utf8 = join '', map chr, @bytes;
  	decode_utf8($b_utf8);
  	return $b_utf8;
-@@ -97,12 +120,12 @@
+@@ -97,7 +124,7 @@
  sub isValidEntry {
  	my ($entry)=@_;
  	my $phost="[0-9A-Za-z_\.\-]+";
@@ -54,21 +58,15 @@
  	my $pos="[0-9A-Za-z\._]+";
  	my $plogin="[0-9A-Za-z_\.\-]+";
  	my $pdate="[0-9]{4}-[0-9]{2}-[0-9]{2}";
- 	my $ptime="[0-9]{2}:[0-9]{2}:[0-9]{2}";
--	return $entry=~/^$phost $pip $pos $plogin $pdate $ptime $pdate $ptime $pdate $ptime $ptime [0-6](| $phost $pip)$/;
-+	return $entry=~/\A$phost $pip $pos $plogin $pdate $ptime $pdate $ptime $pdate $ptime $ptime [0-6](| $phost $pip)\z/;
- }
- 
- my $yaml = YAML::Tiny->read('coq.yml');
-@@ -110,6 +133,7 @@
+@@ -110,6 +137,7 @@
  my $tea_keys = $yaml->[0]->{tea_keys};
  my $db = $yaml->[0]->{db};
  my $exclude = $yaml->[0]->{exclude};
-+$MAX_ENFANTS = $server->{max_children} if defined $server->{max_children};
++$MAX_ENFANTS = $server->{max_children} if defined $server->{max_children} && $server->{max_children} =~ /\A(?:[1-9][0-9]{0,3}|10000)\z/;
  
  my $serveur = IO::Socket::INET->new(LocalPort => $server->{port},
                                      Type      => SOCK_STREAM,
-@@ -121,46 +145,55 @@
+@@ -121,46 +149,63 @@
  
  my ($hote,$hoteIP,$vdiHote,$vdiHoteIP,$os,$login,$jourDebutInitial,$heureDebutInitiale,$jour,$heure,$jourDebut,$heureDebut,$duree,$jourSemaine,$sqlQuery);
  
@@ -79,11 +77,15 @@
 +	my $client = $serveur->accept();
 +	unless ($client) { next if $!{EINTR}; last; }   # interrompu par SIGCHLD : on relance accept
 +	if ($enfants >= $MAX_ENFANTS) { close($client); next; }   # trop de connexions simultanées : on refuse proprement
++	$enfants++;   # réservé AVANT le fork : évite la course avec le moissonneur SIGCHLD si l'enfant meurt très vite
 +	my $pid = fork;
-+	if (!defined $pid) { close($client); next; }               # échec de fork : on n'arrête pas l'écoute
-+	if ($pid) { $enfants++; close($client); next; }            # parent : compte l'enfant et ferme sa copie du socket
++	if (!defined $pid) { $enfants--; close($client); next; }    # échec de fork : on libère la place réservée
++	if ($pid) { close($client); next; }                         # parent : l'enfant est déjà compté, on ferme sa copie du socket
 +	# ---- enfant ----
++	close($serveur);   # l'enfant n'écoute pas de nouvelles connexions : on libère sa copie du socket d'écoute
 +	setsockopt($client, SOL_SOCKET, SO_RCVTIMEO, pack('l!l!', $READ_TIMEOUT, 0));  # anti-slowloris
++	local $SIG{ALRM} = sub { close($client); exit 0; };   # borne dure sur TOUTE la session (lecture, écriture, SQL)
++	alarm($MAX_SESSION);
  	my $insert=0;
 -	my $dbh=DBI->connect("dbi:mysql:database=".$db->{SQL_DBNAME}.";host=".$db->{SQL_HOST}.";port=".$db->{SQL_PORT}.";mysql_connect_timeout=1",$db->{SQL_USERNAME},$db->{SQL_PASSWORD}) or $connexion=0;
 -	if ($connexion) {
@@ -101,9 +103,15 @@
 -						} else {
 -								$sqlQuery = "INSERT INTO Connexions(DateDebutInitiale,DateDebut,HeureDebut,DateFin,HeureFin,Login,NomMachine,IPMAchine,NomOs,Duree,Jour,JourSemaine) VALUES ('$jourDebutInitial $heureDebutInitiale','$jourDebut $heureDebut','$heureDebut','$jour $heure','$heure','$login','$hote','$hoteIP','$os','$duree','$jour','$jourSemaine') ON DUPLICATE KEY UPDATE DateFin='$jour $heure',HeureFin='$heure',Duree='$duree'"; 
 -						}
+-						my $sth=$dbh->prepare($sqlQuery);
+-						my $succes=1;
+-  						$sth->execute() or $succes=0;
+-  						$sth->finish();
+-						$insert+=$succes;
 +	my $dbh;        # connexion MySQL ouverte paresseusement : uniquement si une entrée valide doit être insérée
 +	my $db_ko=0;
-+	while (defined(my $rep = lire_ligne($client, $MAX_LINE))) {
++	my $echeance_session = time() + $MAX_SESSION;
++	while (defined(my $rep = lire_ligne($client, $MAX_LINE, $echeance_session))) {
 +		if ($rep =~ /FIN/ ) {
 +			print $client "$insert\n";
 +		}
@@ -114,27 +122,26 @@
 +				if (!(defined $exclude && $login=~m/$exclude/i)) {
 +					if (defined $vdiHote) {
 +						$sqlQuery = "INSERT INTO Connexions(DateDebutInitiale,DateDebut,HeureDebut,DateFin,HeureFin,Login,NomMachine,IPMAchine,NomOs,Duree,Jour,JourSemaine,NomVM,IPVM) VALUES ('$jourDebutInitial $heureDebutInitiale','$jourDebut $heureDebut','$heureDebut','$jour $heure','$heure','$login','$vdiHote','$vdiHoteIP','$os','$duree','$jour','$jourSemaine','$hote','$hoteIP') ON DUPLICATE KEY UPDATE DateFin='$jour $heure',HeureFin='$heure',Duree='$duree'";
-+					} else {
-+						$sqlQuery = "INSERT INTO Connexions(DateDebutInitiale,DateDebut,HeureDebut,DateFin,HeureFin,Login,NomMachine,IPMAchine,NomOs,Duree,Jour,JourSemaine) VALUES ('$jourDebutInitial $heureDebutInitiale','$jourDebut $heureDebut','$heureDebut','$jour $heure','$heure','$login','$hote','$hoteIP','$os','$duree','$jour','$jourSemaine') ON DUPLICATE KEY UPDATE DateFin='$jour $heure',HeureFin='$heure',Duree='$duree'";
-+					}
-+					if (!$dbh && !$db_ko) {   # connexion MySQL paresseuse : une connexion sans donnée valide n'en ouvre aucune
-+						$dbh=DBI->connect("dbi:mysql:database=".$db->{SQL_DBNAME}.";host=".$db->{SQL_HOST}.";port=".$db->{SQL_PORT}.";mysql_connect_timeout=1",$db->{SQL_USERNAME},$db->{SQL_PASSWORD});
-+						if (!$dbh) { $db_ko=1; printf("%s Connexion MySQL Impossible \n",(strftime "[%d/%m/%Y %H:%M:%S]" , localtime)); }
-+					}
-+					if ($dbh) {
- 						my $sth=$dbh->prepare($sqlQuery);
- 						my $succes=1;
--  						$sth->execute() or $succes=0;
--  						$sth->finish();
-+						$sth->execute() or $succes=0;
-+						$sth->finish();
- 						$insert+=$succes;
--					} else {
+ 					} else {
 -						$insert++;
++						$sqlQuery = "INSERT INTO Connexions(DateDebutInitiale,DateDebut,HeureDebut,DateFin,HeureFin,Login,NomMachine,IPMAchine,NomOs,Duree,Jour,JourSemaine) VALUES ('$jourDebutInitial $heureDebutInitiale','$jourDebut $heureDebut','$heureDebut','$jour $heure','$heure','$login','$hote','$hoteIP','$os','$duree','$jour','$jourSemaine') ON DUPLICATE KEY UPDATE DateFin='$jour $heure',HeureFin='$heure',Duree='$duree'";
  					}
 -				}
 -				else {
 -					printf("%s Paquet mal formé : %s.\n",(strftime "[%d/%m/%Y %H:%M:%S]" , localtime),$entry);
++					if (!$dbh) {   # connexion MySQL paresseuse : une connexion sans donnée valide n'en ouvre aucune
++						$dbh=DBI->connect("dbi:mysql:database=".$db->{SQL_DBNAME}.";host=".$db->{SQL_HOST}.";port=".$db->{SQL_PORT}.";mysql_connect_timeout=1",$db->{SQL_USERNAME},$db->{SQL_PASSWORD});
++						unless ($dbh) {
++							printf("%s Connexion MySQL Impossible \n",(strftime "[%d/%m/%Y %H:%M:%S]" , localtime));
++							print $client "$insert\n";
++							last;   # comme à l'origine : on ne traite plus cette session si MySQL est injoignable
++						}
++					}
++					my $sth=$dbh->prepare($sqlQuery);
++					my $succes=1;
++					$sth->execute() or $succes=0;
++					$sth->finish();
++					$insert+=$succes;
 +				} else {
  					$insert++;
  				}
@@ -150,6 +157,7 @@
 -		printf("%s Connexion MySQL Impossible \n",(strftime "[%d/%m/%Y %H:%M:%S]" , localtime));
  	}
 -	$dbh->disconnect();
++	alarm(0);
 +	$dbh->disconnect() if $dbh;
  	close($client);
  	exit 0;

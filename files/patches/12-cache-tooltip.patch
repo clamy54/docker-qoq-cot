@@ -1,0 +1,9 @@
+--- a/src/app/graphe/view/DureeView.class.php
++++ b/src/app/graphe/view/DureeView.class.php
+@@ -230,5 +230,5 @@
+ $script .= '<script type="text/javascript" src="js/initTimePickerCumul.js"></script>';
+ $script .= '<script type="text/javascript" src="js/initDimension.js"></script>';
+ $script .= '<script type="text/javascript" src="js/hideselect.js"></script>';
+-$script .= '<script type="text/javascript" src="js/tooltip.js"></script>';
++$script .= '<script type="text/javascript" src="js/tooltip.js?v=2"></script>';
+ $script .= '<script type="text/javascript" src="js/manageDureeForm.js"></script>';
