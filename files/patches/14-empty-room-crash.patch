@@ -1,0 +1,53 @@
+diff -ruN avant/src/app/graphe/CumulDureeGraph.class.php apres/src/app/graphe/CumulDureeGraph.class.php
+--- avant/src/app/graphe/CumulDureeGraph.class.php	2026-10-23 15:48:43.495843388 +0200
++++ apres/src/app/graphe/CumulDureeGraph.class.php	2026-10-23 16:29:31.294602519 +0200
+@@ -346,6 +346,16 @@
+     public function display()
+     {
+         $this->setMachines();
++
++        // Salle sans machine sur la période demandée.
++        if (count($this->_machines) === 0) {
++            $myPicture = new \pImage($this->_largeur, 370);
++            $myPicture->setFontProperties(array('FontName' => '../../lib/pChart/fonts/verdana.ttf', 'FontSize' => 12));
++            $myPicture->drawText(10, 20, "Aucun terminal dans cette salle sur la période demandée", array('R' => 0, 'G' => 0, 'B' => 0));
++            $myPicture->autoOutput('pictures/example.drawBarChart.png');
++            return;
++        }
++
+         $this->setTitre();
+         $this->setDureePresenceMachines();
+ 
+diff -ruN avant/src/app/graphe/DureeGraph.class.php apres/src/app/graphe/DureeGraph.class.php
+--- avant/src/app/graphe/DureeGraph.class.php	2026-10-23 15:48:43.543199153 +0200
++++ apres/src/app/graphe/DureeGraph.class.php	2026-10-23 16:29:41.520555924 +0200
+@@ -354,13 +354,27 @@
+     public function display()
+     {
+         $this->setMachines();
++
++        $hauteurCreneau = 25;
++
++        // Salle sans machine sur la période demandée.
++        if (count($this->_machines) === 0) {
++            if ($this->isGraph) {
++                $creneaux = $this->getYAxis();
++                $myPicture = new \pImage($this->largeur, $hauteurCreneau * count($creneaux) + 320);
++                $myPicture->setFontProperties(array('FontName' => '../../lib/pChart/fonts/verdana.ttf', 'FontSize' => 12));
++                $myPicture->drawText(10, 20, "Aucun terminal dans cette salle sur la période demandée", array('R' => 0, 'G' => 0, 'B' => 0));
++                $myPicture->autoOutput('pictures/example.surface.simple.png');
++                return;
++            }
++            return '<map name="mapduree"></map>';
++        }
++
+         $this->setTitre();
+ 
+         $Data  = $this->fetchData();
+         $creneaux   = $this->getYAxis();
+ 
+-     	$hauteurCreneau = 25;
+-
+         if ($this->isGraph) {
+         
+            $graphData=array();
